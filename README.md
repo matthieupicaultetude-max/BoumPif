@@ -10,11 +10,11 @@ La scène principale est `scenes/main.tscn`. Le quartier et ses collisions sont 
 - ZQSD, WASD ou flèches : marcher / conduire.
 - Souris : regarder autour de soi.
 - E : monter dans la voiture orange à proximité, ou descendre une fois arrêté.
-- Espace : sauter à pied, freiner en voiture.
+- Espace : sauter à pied, freiner en voiture à faible vitesse ; maintenir en braquant à partir de 29 km/h pour drifter. Relâcher pour reprendre de l’adhérence.
 - R : remettre le personnage et la voiture au départ.
 - Échap : libérer la souris ; clic dans le jeu : la capturer.
 
-La conduite est arcade, avec une voiture qui reste droite : pas encore de suspension,
+La conduite est arcade : accélération vive, braquage serré et perte d’adhérence au frein à main, avec une voiture qui reste droite : pas encore de suspension,
 de dégâts, de circulation ou de sauvegarde. Si une sortie est bloquée, le jeu essaie
 l'autre côté du véhicule. La ville est délimitée par des murs.
 

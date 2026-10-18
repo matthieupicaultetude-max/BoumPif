@@ -1,7 +1,12 @@
 extends Node3D
 
 const WALK_SPEED := 6.0
-const CAR_SPEED := 20.0
+const CAR_SPEED := 24.0
+const CAR_ACCELERATION := 22.0
+const CAR_GRIP := 12.0
+const DRIFT_GRIP := 1.5
+const DRIFT_MIN_SPEED := 8.0
+var drifting := false
 var player: CharacterBody3D
 var car: CharacterBody3D
 var camera: Camera3D
@@ -149,14 +154,7 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("interact"):
 		_interact()
 	if driving:
-		var throttle := Input.get_axis("back", "forward")
-		car_speed = move_toward(car_speed, throttle * CAR_SPEED, (12.0 if throttle else 7.0) * delta)
-		if Input.is_action_pressed("jump"):
-			car_speed = move_toward(car_speed, 0, 30 * delta)
-		car.rotate_y(-Input.get_axis("left", "right") * car_speed * 0.045 * delta)
-		var movement := -car.global_basis.z * car_speed
-		car.velocity.x = movement.x
-		car.velocity.z = movement.z
+		_drive_car(delta)
 	else:
 		car.velocity.x = move_toward(car.velocity.x, 0, 10 * delta)
 		car.velocity.z = move_toward(car.velocity.z, 0, 10 * delta)
@@ -166,6 +164,9 @@ func _physics_process(delta: float) -> void:
 		for index in car.get_slide_collision_count():
 			if absf(car.get_slide_collision(index).get_normal().y) < 0.5:
 				car_speed = 0
+				car.velocity.x = 0
+				car.velocity.z = 0
+				drifting = false
 	if not driving:
 		var input := Input.get_vector("left", "right", "forward", "back")
 		var direction := Basis(Vector3.UP, yaw) * Vector3(input.x, 0, input.y)
@@ -177,7 +178,34 @@ func _physics_process(delta: float) -> void:
 		player.move_and_slide()
 	_update_camera()
 	var near_car := player.position.distance_to(car.position) < 4
-	hud.text = "BOUMPIF — Premier quartier\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["freiner" if driving else "sauter", "E : sortir de la voiture  |  %d km/h" % int(absf(car_speed) * 3.6) if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
+	hud.text = "BOUMPIF — Premier quartier\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["maintenir pour drifter / freiner" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), "  |  DRIFT" if drifting else ""] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
+
+# Conserver l'inertie dans le monde : le châssis tourne avant la trajectoire
+# pendant un drift. Le grip normal réaligne rapidement la voiture au relâchement.
+func _drive_car(delta: float) -> void:
+	var throttle := Input.get_axis("back", "forward")
+	var steering := Input.get_axis("left", "right")
+	var handbrake := Input.is_action_pressed("jump")
+	var ground_speed := Vector2(car.velocity.x, car.velocity.z).length()
+	if not handbrake or ground_speed < 3.0:
+		drifting = false
+	elif ground_speed >= DRIFT_MIN_SPEED and car_speed > 0:
+		drifting = true
+	var acceleration := 9.0 if drifting else CAR_ACCELERATION
+	var target_speed := throttle * (CAR_SPEED if throttle >= 0 else 10.0)
+	car_speed = move_toward(car_speed, target_speed, (acceleration if throttle else 8.0) * delta)
+	if handbrake:
+		car_speed = move_toward(car_speed, 0, (6.0 if drifting else 34.0) * delta)
+	# Braquage vif dès les basses vitesses, plafonné pour éviter les toupies.
+	var steering_rate := lerpf(0.0, 2.3, clampf(absf(car_speed) / 7.0, 0.0, 1.0))
+	if drifting:
+		steering_rate *= 1.3
+	car.rotate_y(-steering * signf(car_speed) * steering_rate * delta)
+	var desired_velocity := -car.global_basis.z * car_speed
+	var grip := DRIFT_GRIP if drifting else CAR_GRIP
+	var traction := 1.0 - exp(-grip * delta)
+	car.velocity.x = lerpf(car.velocity.x, desired_velocity.x, traction)
+	car.velocity.z = lerpf(car.velocity.z, desired_velocity.z, traction)
 
 func _update_camera() -> void:
 	camera.rotation = Vector3(pitch, yaw, 0)
@@ -194,7 +222,7 @@ func _update_camera() -> void:
 
 func _interact() -> void:
 	if driving:
-		if absf(car_speed) > 1:
+		if Vector2(car.velocity.x, car.velocity.z).length() > 1:
 			return
 		for side in [1.0, -1.0]:
 			var exit_position: Vector3 = car.position + car.global_basis.x * side * 2.2 + Vector3(0, 0.5, 0)
@@ -217,6 +245,7 @@ func _interact() -> void:
 
 func _reset() -> void:
 	driving = false
+	drifting = false
 	car_speed = 0
 	player.collision_layer = 1
 	player.collision_mask = 1
