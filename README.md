@@ -62,11 +62,23 @@ près du départ sud de l’arène.
 Le terrain mesure environ **220 mètres de diamètre** avec **quatre emplacements
 de départ** espacés et orientés vers le centre. Une cuvette vallonnée entoure
 un plateau de choc central. Quatre rampes diagonales permettent de sauter dans
-la cuvette ; huit conteneurs forment des chicanes, et seize caisses physiques
-peuvent être projetées par une voiture. Les murs périphériques, les gradins,
-les tours de projecteurs et les secteurs colorés donnent un aspect de stade industriel.
+la cuvette ; huit conteneurs forment des chicanes. Seize caisses et huit fûts
+physiques peuvent être projetés par une voiture.
 
-**R** remet la voiture et les caisses au départ. Les véhicules restent pilotables
+Les rampes ont un tablier métallique strié et patiné, des bandes de danger,
+des longerons, des traverses, des boulons et des supports contreventés. Les
+conteneurs ont des nervures, des portes doubles, des charnières, des barres de
+verrouillage, des pièces rouillées et des identifiants peints. Le sol conserve
+sa surface physique continue, avec du grain, des traces de dérapage et des
+taches d’huile appliqués dans son matériau.
+
+Les barrières reçoivent des panneaux de béton, des joints, des fixations,
+des bandes de sécurité et des piles de pneus solides. Quatre épaves de voitures,
+quatre ateliers, les gradins et les tours de projecteurs complètent le décor.
+Les petits détails statiques sont regroupés en MultiMesh pour limiter les appels
+de rendu, et la construction reste répartie sur plusieurs images.
+
+**R** remet la voiture, les caisses et les fûts au départ. Les véhicules restent pilotables
 avec les commandes habituelles. Cette version prépare le terrain pour quatre
 voitures : le multijoueur, les adversaires, les points de vie et la déformation
 des carrosseries ne sont pas encore implémentés.

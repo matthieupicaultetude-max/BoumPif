@@ -534,8 +534,15 @@ func test_derby_arena() -> void:
 	await frames(75)
 	Input.action_release("forward")
 	check(prop.global_position.distance_to(before) > 1.0, "Un impact de voiture déplace les caisses du derby")
+	# Inclure un fût dans le contrôle de réinitialisation des objets physiques.
+	var barrel: RigidBody3D = game.derby.props[-1]
+	barrel.position += Vector3(2, 1, 0)
+	barrel.linear_velocity = Vector3(4, 0, 0)
 	game._reset()
-	check(prop.position.distance_to(game.derby.prop_spawns[0].origin) < 0.01, "R remet aussi les débris à leur position initiale")
+	var reset_ok := true
+	for i in game.derby.props.size():
+		reset_ok = reset_ok and game.derby.props[i].position.distance_to(game.derby.prop_spawns[i].origin) < 0.01
+	check(reset_ok, "R remet toutes les caisses et tous les fûts à leur position initiale")
 	game.portal_cooldown = 0
 	game.player.position = game.DERBY_OFFSET + game.derby.portal_position + Vector3(0, 1.1, 0)
 	await frames(2)
