@@ -24,7 +24,9 @@ Le turbo charge au sol à vitesse suffisante ; braquer vers l'intérieur charge 
 - Étincelles **bleues** : mini-turbo prêt, relâcher Espace pour 0,65 s de boost.
 - Étincelles **orange** : super mini-turbo prêt, relâcher pour 1,3 s de boost.
 - Un relâchement trop tôt ne donne aucun turbo. Un choc ou R annule la charge et le boost.
-- Les étincelles, l'inclinaison de la carrosserie et l'indication à l'écran signalent le drift.
+- Les pneus arrière dégagent une fumée grise qui se dissipe derrière la voiture pendant les dérapages au sol.
+- Les étincelles bleues/orange indiquent la charge ; deux gerbes dorées s'allument derrière la voiture pendant le boost.
+- L'inclinaison de la carrosserie et l'indication à l'écran signalent aussi le drift.
 
 La conduite est arcade : accélération vive, braquage serré et mini-turbos, avec une voiture qui reste droite : pas encore de suspension,
 de dégâts, de circulation ou de sauvegarde. Si une sortie est bloquée, le jeu essaie

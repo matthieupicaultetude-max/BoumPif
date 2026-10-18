@@ -16,6 +16,8 @@ var boost_time := 0.0
 var handbrake_was_pressed := false
 var car_visual: Node3D
 var sparks: Array[CPUParticles3D] = []
+var tire_smoke: Array[CPUParticles3D] = []
+var boost_sparks: Array[CPUParticles3D] = []
 var player: CharacterBody3D
 var car: CharacterBody3D
 var camera: Camera3D
@@ -153,6 +155,7 @@ func _build_car() -> void:
 	for side in [-1.0, 1.0]:
 		var effect := CPUParticles3D.new()
 		effect.position = Vector3(side, -0.3, 1.3)
+		effect.local_coords = false
 		effect.amount = 24
 		effect.lifetime = 0.25
 		effect.direction = Vector3(side, 0.3, 1)
@@ -171,6 +174,82 @@ func _build_car() -> void:
 		effect.emitting = false
 		car_visual.add_child(effect)
 		sparks.append(effect)
+		_add_tire_smoke(side)
+		_add_boost_sparks(side)
+
+func _add_tire_smoke(side: float) -> void:
+	var smoke := CPUParticles3D.new()
+	smoke.position = Vector3(side, -0.45, 1.2)
+	smoke.local_coords = false
+	smoke.amount = 28
+	smoke.lifetime = 0.9
+	smoke.direction = Vector3(0, 1, 0.3)
+	smoke.spread = 45
+	smoke.initial_velocity_min = 0.5
+	smoke.initial_velocity_max = 1.3
+	smoke.gravity = Vector3(0, 0.7, 0)
+	smoke.scale_amount_min = 0.5
+	smoke.scale_amount_max = 1.0
+	var growth := Curve.new()
+	growth.add_point(Vector2(0, 0.3))
+	growth.add_point(Vector2(1, 1.0))
+	smoke.scale_amount_curve = growth
+	var fade := Gradient.new()
+	fade.set_color(0, Color(0.75, 0.77, 0.8, 0.6))
+	fade.set_color(1, Color(0.75, 0.77, 0.8, 0))
+	smoke.color_ramp = fade
+	# Disque doux procédural : aucun fichier de texture externe nécessaire.
+	var radial := GradientTexture2D.new()
+	radial.width = 64
+	radial.height = 64
+	radial.fill = GradientTexture2D.FILL_RADIAL
+	radial.fill_from = Vector2(0.5, 0.5)
+	radial.fill_to = Vector2(1, 0.5)
+	var opacity := Gradient.new()
+	opacity.set_color(0, Color.WHITE)
+	opacity.set_color(1, Color(1, 1, 1, 0))
+	radial.gradient = opacity
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.vertex_color_use_as_albedo = true
+	material.albedo_texture = radial
+	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	var puff := QuadMesh.new()
+	puff.size = Vector2(1.8, 1.8)
+	puff.material = material
+	smoke.mesh = puff
+	smoke.emitting = false
+	car.add_child(smoke)
+	tire_smoke.append(smoke)
+
+func _add_boost_sparks(side: float) -> void:
+	var effect := CPUParticles3D.new()
+	effect.position = Vector3(side * 0.65, -0.1, 1.95)
+	effect.local_coords = false
+	effect.amount = 40
+	effect.lifetime = 0.35
+	effect.direction = Vector3(0, 0.15, 1)
+	effect.spread = 20
+	effect.initial_velocity_min = 6
+	effect.initial_velocity_max = 12
+	effect.gravity = Vector3(0, -2, 0)
+	var fade := Gradient.new()
+	fade.set_color(0, Color("fff1a8"))
+	fade.set_color(1, Color(1, 0.35, 0.05, 0))
+	effect.color_ramp = fade
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.06, 0.06, 0.24)
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.vertex_color_use_as_albedo = true
+	mesh.material = material
+	effect.mesh = mesh
+	effect.emitting = false
+	car.add_child(effect)
+	boost_sparks.append(effect)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -288,6 +367,12 @@ func _update_drift_effects(delta: float) -> void:
 		effect.emitting = (drifting and car.is_on_floor() and drift_charge >= MINI_TURBO_CHARGE) or boost_time > 0
 		effect.color = Color("ff9c32") if drift_charge >= SUPER_TURBO_CHARGE or boost_time > 0 else Color("45bfff")
 
+	var moving := Vector2(car.velocity.x, car.velocity.z).length() > 3.0
+	for smoke in tire_smoke:
+		smoke.emitting = drifting and car.is_on_floor() and moving
+	for effect in boost_sparks:
+		effect.emitting = boost_time > 0
+
 func _update_camera() -> void:
 	camera.rotation = Vector3(pitch, yaw, 0)
 	if driving:
@@ -330,8 +415,9 @@ func _reset() -> void:
 	_cancel_drift()
 	handbrake_was_pressed = Input.is_action_pressed("jump")
 	car_visual.rotation = Vector3.ZERO
-	for effect in sparks:
-		effect.emitting = false
+	for effects in [sparks, tire_smoke, boost_sparks]:
+		for effect in effects:
+			effect.emitting = false
 	car_speed = 0
 	player.collision_layer = 1
 	player.collision_mask = 1
