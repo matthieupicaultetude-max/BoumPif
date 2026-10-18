@@ -4,6 +4,9 @@ extends Node3D
 const RADIUS := 310.0
 const GRID_STEP := 2.5
 const BUCKET_SIZE := 32.0
+const ROAD_MASK_SIZE := 1024
+var road_mask: Image
+var road_material: ShaderMaterial
 var roads: Array[Dictionary] = []
 var road_buckets: Dictionary = {}
 var race_route := PackedVector3Array()
@@ -19,6 +22,7 @@ var house_count := 0
 
 func build() -> void:
 	_plan_roads()
+	await _build_road_material()
 	await _build_terrain()
 	for road in roads:
 		await _build_road(road)
@@ -128,8 +132,6 @@ func _build_terrain() -> void:
 		if x % 8 == 0:
 			await get_tree().process_frame
 	terrain_heights = heights
-	var material := StandardMaterial3D.new()
-	material.vertex_color_use_as_albedo = true
 	# Petites tuiles : pas de gros envoi de maillage/collision en une seule image.
 	const TILE_CELLS := 31
 	for tx in range(0, cells, TILE_CELLS):
@@ -156,7 +158,7 @@ func _build_terrain() -> void:
 			var terrain := MeshInstance3D.new()
 			terrain.name = "Terrain_%d_%d" % [tx, tz]
 			terrain.mesh = surface.commit()
-			terrain.material_override = material
+			terrain.material_override = road_material
 			add_child(terrain)
 			terrain.create_trimesh_collision()
 			await get_tree().process_frame
@@ -172,42 +174,70 @@ func _build_terrain() -> void:
 	sea.material_override = water
 	add_child(sea)
 
+# La route est une couleur du terrain, jamais un second maillage superposé.
+# Les bandes restent de petits détails ; elles ne forment pas la chaussée.
 func _build_road(road: Dictionary) -> void:
 	var points: PackedVector3Array = road.points
-	var surface := SurfaceTool.new()
-	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for i in range(points.size() - 1):
-		var a := points[i]
-		var b := points[i + 1]
-		var right := Vector3(b.z - a.z, 0, a.x - b.x).normalized() * float(road.width) / 2
-		var length_steps := maxi(1, int(ceil(a.distance_to(b) / 1.25)))
-		var width_steps := maxi(1, int(ceil(float(road.width) / 1.25)))
-		for longitudinal in length_steps:
-			for lateral in width_steps:
-				var corners: Array[Vector3] = []
-				for uv in [Vector2(0, 0), Vector2(0, 1), Vector2(1, 0), Vector2(1, 1)]:
-					var point: Vector3 = a.lerp(b, (longitudinal + uv.x) / length_steps) + right * (2 * (lateral + uv.y) / width_steps - 1)
-					point.y = ground_height(point.x, point.z) + 0.04
-					corners.append(point)
-				for index in [0, 1, 2, 1, 3, 2]:
-					surface.add_vertex(corners[index])
-		if i % 24 == 0:
-			await get_tree().process_frame
-	surface.generate_normals()
-	var mesh := MeshInstance3D.new()
-	mesh.name = "GroundedRoad_%d" % roads.find(road)
-	mesh.mesh = surface.commit()
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color("b49b72") if road.dirt else Color("454951")
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mesh.material_override = material
-	add_child(mesh)
-	# Une seule surface physique continue évite les rebords entre tronçons.
 	if not road.dirt:
 		for i in range(0, points.size() - 1, 4):
 			var point := points[i].lerp(points[i + 1], 0.5)
 			point.y = ground_height(point.x, point.z) + 0.07
 			_add_marking(Vector3(0.18, 0.03, 1.6), point, Color("f1dfaa"), atan2(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z))
+			if i % 128 == 0:
+				await get_tree().process_frame
+
+func _build_road_material() -> void:
+	road_mask = Image.create(ROAD_MASK_SIZE, ROAD_MASK_SIZE, false, Image.FORMAT_RG8)
+	var pixel_size := 2.0 * RADIUS / ROAD_MASK_SIZE
+	for road in roads:
+		var points: PackedVector3Array = road.points
+		var half_width: float = road.width / 2
+		for i in range(points.size() - 1):
+			var a := Vector2(points[i].x, points[i].z)
+			var b := Vector2(points[i + 1].x, points[i + 1].z)
+			var ab := b - a
+			var margin := half_width + pixel_size
+			var min_x := maxi(0, int(floor((minf(a.x, b.x) - margin + RADIUS) / pixel_size)))
+			var max_x := mini(ROAD_MASK_SIZE - 1, int(ceil((maxf(a.x, b.x) + margin + RADIUS) / pixel_size)))
+			var min_z := maxi(0, int(floor((minf(a.y, b.y) - margin + RADIUS) / pixel_size)))
+			var max_z := mini(ROAD_MASK_SIZE - 1, int(ceil((maxf(a.y, b.y) + margin + RADIUS) / pixel_size)))
+			for px in range(min_x, max_x + 1):
+				for pz in range(min_z, max_z + 1):
+					var point := Vector2((px + 0.5) * pixel_size - RADIUS, (pz + 0.5) * pixel_size - RADIUS)
+					var t := clampf((point - a).dot(ab) / maxf(ab.length_squared(), 0.001), 0, 1)
+					var distance := point.distance_to(a + ab * t)
+					var coverage := 1.0 - smoothstep(half_width - pixel_size * 0.5, half_width + pixel_size * 0.5, distance)
+					if coverage <= 0:
+						continue
+					var pixel := road_mask.get_pixel(px, pz)
+					if road.dirt:
+						pixel.g = maxf(pixel.g, coverage)
+					else:
+						pixel.r = maxf(pixel.r, coverage)
+					road_mask.set_pixel(px, pz, pixel)
+			if i % 16 == 0:
+				await get_tree().process_frame
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode diffuse_burley;
+uniform sampler2D road_mask : filter_linear, repeat_disable;
+uniform float terrain_span = 620.0;
+varying vec2 road_uv;
+void vertex() {
+    road_uv = (VERTEX.xz + vec2(terrain_span * 0.5)) / terrain_span;
+}
+void fragment() {
+    vec2 coverage = texture(road_mask, road_uv).rg;
+    vec3 dirt = vec3(0.4564, 0.3278, 0.1683);
+    vec3 asphalt = vec3(0.0595, 0.0666, 0.0823);
+    ALBEDO = mix(mix(COLOR.rgb, dirt, coverage.g), asphalt, coverage.r);
+    ROUGHNESS = 0.95;
+}
+"""
+	road_material = ShaderMaterial.new()
+	road_material.shader = shader
+	road_material.set_shader_parameter("road_mask", ImageTexture.create_from_image(road_mask))
+	road_material.set_shader_parameter("terrain_span", RADIUS * 2)
 
 func _build_villages() -> void:
 	for v in villages.size():

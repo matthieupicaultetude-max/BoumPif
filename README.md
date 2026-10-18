@@ -40,10 +40,12 @@ Les troncs et les bâtiments ont des collisions, avec un dégagement autour des 
 La montée en spirale vers le volcan, le cratère, la lave, le panache de fumée,
 les chemins de terre et le sentier côtier sont conservés.
 
-La chaussée est finement subdivisée et suit l’interpolation du terrain physique,
-avec un décalage visuel de 4 cm pour éviter le scintillement. Le véhicule roule
-sur une surface physique continue. Les arbres et les balises sont affichés en
-lots ; les massifs hors champ ou trop éloignés sont masqués.
+L’asphalte et la terre des chemins sont appliqués directement au matériau du
+terrain via un masque généré à la première visite. Il n’existe plus de maillage
+de chaussée superposé : la route épouse exactement la surface physique, sans
+intersections entre triangles ni scintillement aux croisements. Le masque donne
+priorité à l’asphalte lorsque deux tracés se croisent. Les arbres et les balises
+sont affichés en lots ; les massifs hors champ ou trop éloignés sont masqués.
 
 Tomber dans l’eau ou dans la lave ramène à l’arrivée de la zone. Le passage
 d’un portail emmène aussi la voiture, stationnée près de l’arrivée si l’on est à pied.
@@ -82,5 +84,5 @@ le freinage, le saut de drift, le contre-braquage, les deux niveaux de mini-turb
 l’expiration du boost, les collisions avec les bâtiments et la limite de ville, et la réinitialisation.
 Il teste aussi les portails dans les deux sens, les collisions de la montée, un trajet
 physique complet en voiture jusqu’au cratère, un tour complet du circuit sauvage,
-le contact des routes avec le terrain, et la récupération après une chute dans l’eau.
+la couverture des tracés par le matériau de route et l’absence de chaussée superposée, et la récupération après une chute dans l’eau.
 La qualité visuelle et les sensations de conduite restent à évaluer dans l’éditeur.

@@ -331,19 +331,32 @@ func test_wild_circuit() -> void:
 		rising = rising or route[i + 1].y > route[i].y + 0.1
 		falling = falling or route[i + 1].y < route[i].y - 0.1
 	check(high - low > 20 and rising and falling, "La boucle alterne montées et descentes avec un relief marqué")
-	var road_contact := true
-	var checked_roads := 0
+	var terrain_tiles := 0
+	var separate_road_meshes := 0
+	var shared_material := true
 	for child in game.island.get_children():
-		if child is MeshInstance3D and String(child.name).begins_with("GroundedRoad"):
-			checked_roads += 1
-			var vertices: PackedVector3Array = child.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-			for i in range(0, vertices.size(), maxi(1, vertices.size() / 80)):
-				var at: Vector3 = vertices[i] + game.ISLAND_OFFSET
-				var query := PhysicsRayQueryParameters3D.create(at + Vector3(0, 1, 0), at - Vector3(0, 2, 0))
-				var hit: Dictionary = game.get_world_3d().direct_space_state.intersect_ray(query)
-				if hit.is_empty() or absf(hit.position.y - at.y) > 0.12:
-					road_contact = false
-	check(road_contact and checked_roads == game.island.roads.size(), "La chaussée suit le sol physique à moins de douze centimètres")
+		if child is MeshInstance3D:
+			if String(child.name).begins_with("GroundedRoad"):
+				separate_road_meshes += 1
+			if String(child.name).begins_with("Terrain_"):
+				terrain_tiles += 1
+				shared_material = shared_material and child.material_override == game.island.road_material
+	check(terrain_tiles == 64 and separate_road_meshes == 0 and shared_material, "La route et le terrain partagent une seule surface : aucune chaussée superposée")
+	var covered := true
+	var junction_found := false
+	for road: Dictionary in game.island.roads:
+		var points: PackedVector3Array = road.points
+		for i in range(0, points.size() - 1, 4):
+			# Contrôler aussi les milieux des segments, pas seulement leurs sommets.
+			for t in [0.0, 0.5]:
+				var point := points[i].lerp(points[i + 1], t)
+				var pixel: Color = road_mask_at(point)
+				if (pixel.r < 0.95 and not road.dirt) or (maxf(pixel.r, pixel.g) < 0.95 and road.dirt):
+					covered = false
+				junction_found = junction_found or (pixel.r > 0.95 and pixel.g > 0.95)
+	check(covered, "L’asphalte et les chemins couvrent les sommets et les milieux de tous les tracés")
+	check(junction_found, "Les croisements asphalte et terre se composent dans le même matériau")
+	check(road_mask_at(Vector3(300, 0, 300)).r == 0 and road_mask_at(Vector3(300, 0, 300)).g == 0, "Le terrain hors route conserve sa couleur")
 	game.car.position = game.ISLAND_OFFSET + route[0] + Vector3(0, 1, 0)
 	game.car.velocity = Vector3.ZERO
 	game.car_speed = 0
@@ -368,3 +381,9 @@ func test_wild_circuit() -> void:
 		for i in game.car.get_slide_collision_count():
 			var collision: KinematicCollision3D = game.car.get_slide_collision(i)
 			print("Obstacle : ", collision.get_collider(), " normale ", collision.get_normal())
+
+func road_mask_at(point: Vector3) -> Color:
+	var size: int = game.island.ROAD_MASK_SIZE
+	var x := clampi(int((point.x + game.island.RADIUS) / (2 * game.island.RADIUS) * size), 0, size - 1)
+	var z := clampi(int((point.z + game.island.RADIUS) / (2 * game.island.RADIUS) * size), 0, size - 1)
+	return game.island.road_mask.get_pixel(x, z)
