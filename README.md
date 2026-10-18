@@ -52,6 +52,25 @@ d’un portail emmène aussi la voiture, stationnée près de l’arrivée si l�
 **R** réinitialise dans la zone actuelle. C’est une première version du décor,
 avec des formes simples, sans intérieurs de maisons ni simulation d’eau.
 
+## La Fonderie : arène de destruction derby
+
+Prendre le **portail orange au sud du quartier**, à l’opposé de celui de l’île.
+L’arène est construite à la première visite et mise en cache, comme l’île ;
+seule la zone visitée est affichée et simulée. Le portail de retour se trouve
+près du départ sud de l’arène.
+
+Le terrain mesure environ **220 mètres de diamètre** avec **quatre emplacements
+de départ** espacés et orientés vers le centre. Une cuvette vallonnée entoure
+un plateau de choc central. Quatre rampes diagonales permettent de sauter dans
+la cuvette ; huit conteneurs forment des chicanes, et seize caisses physiques
+peuvent être projetées par une voiture. Les murs périphériques, les gradins,
+les tours de projecteurs et les secteurs colorés donnent un aspect de stade industriel.
+
+**R** remet la voiture et les caisses au départ. Les véhicules restent pilotables
+avec les commandes habituelles. Cette version prépare le terrain pour quatre
+voitures : le multijoueur, les adversaires, les points de vie et la déformation
+des carrosseries ne sont pas encore implémentés.
+
 ## Voiture de rallye
 
 La voiture dispose d’une carrosserie biseautée, d’un habitacle incliné, d’un toit
@@ -106,4 +125,6 @@ l’expiration du boost, les collisions avec les bâtiments et la limite de vill
 Il teste aussi les portails dans les deux sens, les collisions de la montée, un trajet
 physique complet en voiture jusqu’au cratère, un tour complet du circuit sauvage,
 la couverture des tracés par le matériau de route et l’absence de chaussée superposée, et la récupération après une chute dans l’eau.
+L’arène est aussi vérifiée : portails, quatre départs libres, charge vers le centre,
+saut sur une rampe, enceinte, impact sur une caisse et réinitialisation des débris.
 La qualité visuelle et les sensations de conduite restent à évaluer dans l’éditeur.

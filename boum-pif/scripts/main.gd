@@ -1,5 +1,11 @@
 extends Node3D
 
+const DerbyArena = preload("res://scripts/derby_arena.gd")
+const DERBY_OFFSET := Vector3(-1200, 0, 0)
+const DERBY_PORTAL := Vector3(0, 0, 54)
+var derby: DerbyArena
+var on_derby := false
+
 const RallyCar = preload("res://scripts/rally_car.gd")
 const IslandZone = preload("res://scripts/island.gd")
 const ISLAND_OFFSET := Vector3(1200, 0, 0)
@@ -62,6 +68,7 @@ func _ready() -> void:
 	add_child(city_zone)
 	_build_city()
 	_build_portal(city_zone, CITY_PORTAL, "ÎLE DU VOLCAN", Color("66e4ef"))
+	_build_portal(city_zone, DERBY_PORTAL, "LA FONDERIE · DERBY", Color("f19b45"))
 	player = CharacterBody3D.new()
 	player.name = "Player"
 	player.floor_snap_length = 0.5
@@ -295,11 +302,20 @@ func _physics_process(delta: float) -> void:
 		car.velocity.x = move_toward(car.velocity.x, 0, 10 * delta)
 		car.velocity.z = move_toward(car.velocity.z, 0, 10 * delta)
 	car.velocity.y -= 20 * delta
+	var impact_velocity := car.velocity
 	car.move_and_slide()
 	car_visual.update_motion(delta, Input.get_axis("left", "right") if driving else 0.0, drifting)
 	if driving and car.get_slide_collision_count() > 0:
 		for index in car.get_slide_collision_count():
-			if absf(car.get_slide_collision(index).get_normal().y) < 0.5:
+			var collision := car.get_slide_collision(index)
+			if collision.get_collider() is RigidBody3D and absf(collision.get_normal().y) < 0.5:
+				var prop := collision.get_collider() as RigidBody3D
+				var impact_speed := maxf(0, -impact_velocity.dot(collision.get_normal()))
+				prop.apply_central_impulse(-collision.get_normal() * minf(impact_speed, 25) * prop.mass * 0.8)
+				car_speed *= 0.75
+				_cancel_drift()
+				continue
+			if absf(collision.get_normal().y) < 0.5:
 				car_speed = 0
 				car.velocity.x = 0
 				car.velocity.z = 0
@@ -319,7 +335,7 @@ func _physics_process(delta: float) -> void:
 	_update_drift_effects(delta)
 	_update_camera()
 	var near_car := player.position.distance_to(car.position) < 4
-	hud.text = "BOUMPIF — %s\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["Île du volcan" if on_island else "Quartier · portail de l’île au bout de la route nord", "direction + maintien : drift ; relâcher : mini-turbo" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), _drift_feedback()] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
+	hud.text = "BOUMPIF — %s\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["La Fonderie · Derby" if on_derby else ("Île du volcan" if on_island else "Quartier · Île : nord / Derby : sud"), "direction + maintien : drift ; relâcher : mini-turbo" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), _drift_feedback()] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
 
 # Drift manuel : saut au déclenchement, côté verrouillé, contre-braquage
 # pour élargir la courbe, puis mini-turbo au relâchement d'Espace.
@@ -448,6 +464,8 @@ func _interact() -> void:
 		yaw = car.rotation.y
 
 func _reset() -> void:
+	if on_derby and is_instance_valid(derby):
+		derby.reset_props()
 	driving = false
 	_cancel_drift()
 	handbrake_was_pressed = Input.is_action_pressed("jump")
@@ -491,6 +509,16 @@ func _build_portal(parent: Node3D, point: Vector3, title: String, color: Color) 
 
 func _check_zone_transition() -> void:
 	var actor: CharacterBody3D = car if driving else player
+	if on_derby:
+		var derby_return: Vector3 = DERBY_OFFSET + derby.portal_position
+		if portal_cooldown <= 0 and absf(actor.position.y - derby_return.y) < 5 and Vector2(actor.position.x - derby_return.x, actor.position.z - derby_return.z).length() < 3.3:
+			_travel_derby(false)
+		elif actor.position.y < -15:
+			_respawn_in_zone()
+		return
+	if not on_island and portal_cooldown <= 0 and absf(actor.position.y) < 5 and Vector2(actor.position.x - DERBY_PORTAL.x, actor.position.z - DERBY_PORTAL.z).length() < 3.3:
+		_travel_derby(true)
+		return
 	var portal: Vector3 = ISLAND_OFFSET + island.portal_position if on_island else CITY_PORTAL
 	if portal_cooldown <= 0 and absf(actor.position.y - portal.y) < 5 and Vector2(actor.position.x - portal.x, actor.position.z - portal.z).length() < 3.3:
 		_travel_to(not on_island)
@@ -505,6 +533,9 @@ func _check_zone_transition() -> void:
 func _travel_to(to_island: bool) -> void:
 	if loading_zone:
 		return
+	if is_instance_valid(derby) and derby.get_parent() == self:
+		remove_child(derby)
+	on_derby = false
 	if to_island and not is_instance_valid(island):
 		loading_zone = true
 		hud.text = "Préparation de l’île…"
@@ -556,5 +587,45 @@ func _exit_tree() -> void:
 	# Libérer aussi les zones en cache, qui ne sont plus enfants de la scène.
 	if is_instance_valid(island) and island.get_parent() == null:
 		island.free()
+	if is_instance_valid(derby) and derby.get_parent() == null:
+		derby.free()
 	if is_instance_valid(city_zone) and city_zone.get_parent() == null:
 		city_zone.free()
+
+func _travel_derby(to_derby: bool) -> void:
+	if loading_zone:
+		return
+	if not to_derby:
+		await _travel_to(false)
+		spawn = Vector3(0, 1.2, 43)
+		car_spawn = Vector3(4, 0.8, 43)
+		spawn_yaw = 0
+		_respawn_in_zone()
+		return
+	if not is_instance_valid(derby):
+		loading_zone = true
+		hud.text = "Préparation de La Fonderie…"
+		await get_tree().process_frame
+		await get_tree().process_frame
+		derby = DerbyArena.new()
+		derby.position = DERBY_OFFSET
+		derby.visible = false
+		add_child(derby)
+		await derby.build()
+		_build_portal(derby, derby.portal_position, "RETOUR AU QUARTIER", Color("f19b45"))
+		remove_child(derby)
+		loading_zone = false
+	if city_zone.get_parent() == self:
+		remove_child(city_zone)
+	if is_instance_valid(island) and island.get_parent() == self:
+		remove_child(island)
+	if derby.get_parent() == null:
+		add_child(derby)
+	derby.visible = true
+	on_island = false
+	on_derby = true
+	camera.far = 420
+	spawn = DERBY_OFFSET + derby.arrival + Vector3(0, 1.1, 0)
+	car_spawn = DERBY_OFFSET + derby.arrival + Vector3(4, 0.9, 0)
+	spawn_yaw = 0
+	_respawn_in_zone()

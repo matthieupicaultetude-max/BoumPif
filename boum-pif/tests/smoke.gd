@@ -90,6 +90,7 @@ func run() -> void:
 	game._reset()
 	check(not game.driving and game.player.position.is_equal_approx(game.spawn), "Réinitialisation")
 	await test_island_zone()
+	await test_derby_arena()
 	print("Résultat : %d échec(s)" % failures)
 	quit(1 if failures else 0)
 
@@ -457,3 +458,94 @@ func test_vehicle_terrain() -> void:
 	check(visual.rotation.is_zero_approx() and visual.spring_offsets[0] == 0, "Réinitialiser remet aussi la suspension à zéro")
 	ramp.queue_free()
 	await frames(2)
+
+func test_derby_arena() -> void:
+	check(not is_instance_valid(game.derby), "L’arène n’est pas construite avant sa première visite")
+	game._travel_to(false)
+	game.portal_cooldown = 0
+	game.player.position = game.DERBY_PORTAL + Vector3(0, 1, 0)
+	await frames(2)
+	var ticks := 0
+	while game.loading_zone and ticks < 1000:
+		await process_frame
+		ticks += 1
+	await frames(30)
+	check(game.on_derby and not game.on_island and game.derby.is_inside_tree(), "Le portail sud mène à La Fonderie")
+	check(not game.city_zone.is_inside_tree() and not game.island.is_inside_tree(), "Les autres zones restent détachées pendant le derby")
+	check(game.derby.spawn_points.size() == 4 and game.derby.SIZE >= 200, "L’arène de plus de deux cents mètres possède quatre départs")
+	var arena: Node3D = game.derby
+	var starts_clear := true
+	for point: Vector3 in game.derby.spawn_points:
+		var query := PhysicsShapeQueryParameters3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = Vector3(2.2, 1.2, 4.1)
+		query.shape = shape
+		query.transform = Transform3D(Basis.IDENTITY, game.DERBY_OFFSET + point)
+		query.exclude = [game.car.get_rid(), game.player.get_rid()]
+		starts_clear = starts_clear and game.get_world_3d().direct_space_state.intersect_shape(query).is_empty()
+	check(starts_clear, "Les quatre voitures disposent d’un volume de départ libre")
+	check(game.derby.height_at(0, 0) > game.derby.height_at(40, 0) + 3, "Le plateau central domine la cuvette de combat")
+	var ramps_solid: bool = game.derby.ramp_routes.size() == 4
+	for route: PackedVector3Array in game.derby.ramp_routes:
+		var point: Vector3 = game.DERBY_OFFSET + route[8]
+		var hit: Dictionary = game.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(point + Vector3(0, 2, 0), point - Vector3(0, 2, 0)))
+		ramps_solid = ramps_solid and not hit.is_empty() and absf(hit.position.y - point.y) < 0.3 and hit.normal.y > 0.7
+	check(ramps_solid, "Quatre rampes possèdent une surface physique praticable")
+	game.driving = true
+	game.player.collision_layer = 0
+	game.player.collision_mask = 0
+	game.car.position = game.DERBY_OFFSET + game.derby.arrival + Vector3(0, 1, 0)
+	game.car.rotation.y = 0
+	Input.action_press("forward")
+	await frames(180)
+	Input.action_release("forward")
+	check(game.car.position.z < 40 and game.on_derby, "La voiture peut charger depuis le départ vers le centre")
+	var ramp_route: PackedVector3Array = game.derby.ramp_routes[0]
+	var outward: Vector3 = Vector3(ramp_route[0].x, 0, ramp_route[0].z).normalized()
+	game.car.position = game.DERBY_OFFSET + ramp_route[0] + outward * 7 + Vector3(0, 1, 0)
+	game.car.rotation.y = atan2(outward.x, outward.z)
+	game.car.velocity = Vector3.ZERO
+	game.car_speed = 0
+	Input.action_press("forward")
+	var jumped := false
+	for i in 120:
+		await frames(1)
+		var local: Vector3 = game.car.position - game.DERBY_OFFSET
+		jumped = jumped or (not game.car.is_on_floor() and local.y - game.derby.height_at(local.x, local.z) > 1.4)
+	Input.action_release("forward")
+	check(jumped, "La voiture franchit une rampe et décolle au-dessus de la cuvette")
+	game.car.position = game.DERBY_OFFSET + Vector3(0, game.derby.height_at(0, -94) + 1, -94)
+	game.car.rotation.y = 0
+	game.car.velocity = Vector3.ZERO
+	game.car_speed = 0
+	Input.action_press("forward")
+	await frames(100)
+	Input.action_release("forward")
+	check(game.car.position.z > -110 and game.car_speed < 2, "L’enceinte retient une voiture lancée contre le mur extérieur")
+	# Charge physique sur une caisse, dans la diagonale nord-est.
+	var prop: RigidBody3D = game.derby.props[0]
+	var before: Vector3 = prop.global_position
+	var direction: Vector3 = Vector3(before.x - game.DERBY_OFFSET.x, 0, before.z).normalized()
+	game.car.position = before + direction * 9 + Vector3(0, 0.8, 0)
+	game.car.rotation.y = atan2(direction.x, direction.z)
+	game.car.velocity = -direction * 16
+	game.car_speed = 16
+	Input.action_press("forward")
+	await frames(75)
+	Input.action_release("forward")
+	check(prop.global_position.distance_to(before) > 1.0, "Un impact de voiture déplace les caisses du derby")
+	game._reset()
+	check(prop.position.distance_to(game.derby.prop_spawns[0].origin) < 0.01, "R remet aussi les débris à leur position initiale")
+	game.portal_cooldown = 0
+	game.player.position = game.DERBY_OFFSET + game.derby.portal_position + Vector3(0, 1.1, 0)
+	await frames(2)
+	check(not game.on_derby and game.city_zone.is_inside_tree() and not game.derby.is_inside_tree(), "Le portail de sortie ramène au quartier et désactive l’arène")
+	await game._travel_derby(true)
+	check(game.derby == arena and game.on_derby, "Une nouvelle visite réutilise l’arène en cache")
+	game.driving = true
+	game.player.collision_layer = 0
+	game.player.collision_mask = 0
+	game.portal_cooldown = 0
+	game.car.position = game.DERBY_OFFSET + game.derby.portal_position + Vector3(0, 0.9, 0)
+	await frames(2)
+	check(not game.on_derby and game.driving and game.car.position.x > -100, "Le portail de retour conserve la voiture et son conducteur")
