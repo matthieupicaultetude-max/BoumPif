@@ -245,7 +245,7 @@ func test_island_zone() -> void:
 	var cached_island: Node3D = game.island
 	await frames(60)
 	check(game.player.is_on_floor(), "L’arrivée sur l’île possède un sol physique")
-	check(game.island.house_count == 12 and game.island.villages.size() == 2, "Deux hameaux de six maisons")
+	check(game.island.house_count >= 30 and game.island.villages.size() == 2, "Deux villages denses avec au moins trente maisons")
 	check(game.island.roads.size() >= 6, "Route principale et chemins secondaires présents")
 	var route: PackedVector3Array = game.island.main_route
 	check(route[-1].y > route[0].y + 70, "La route atteint le haut du volcan")
@@ -300,6 +300,7 @@ func test_island_zone() -> void:
 		for i in game.car.get_slide_collision_count():
 			var hit: KinematicCollision3D = game.car.get_slide_collision(i)
 			print("Obstacle : ", hit.get_collider(), " normale ", hit.get_normal(), " contact ", hit.get_position())
+	await test_wild_circuit()
 	game.car.position.y = -4
 	await frames(2)
 	check(game.on_island and game.driving and game.car.position.y > 1, "L’eau ramène à l’arrivée sans perdre la voiture")
@@ -314,3 +315,56 @@ func wait_for_zone() -> void:
 		render_frames += 1
 	check(not game.loading_zone and render_frames > 20, "La préparation de l’île rend la main entre les lots de travail")
 	await frames(2)
+
+func test_wild_circuit() -> void:
+	var route: PackedVector3Array = game.island.race_route
+	check(route.size() > 500 and route[0].distance_to(route[-1]) < 0.01, "Le circuit sauvage forme une boucle fermée")
+	check(game.island.tree_count >= 400, "Forêts denses regroupées par secteurs")
+	print("Décor : %d arbres, %d maisons" % [game.island.tree_count, game.island.house_count])
+	var high := -INF
+	var low := INF
+	var rising := false
+	var falling := false
+	for i in range(route.size() - 1):
+		high = maxf(high, route[i].y)
+		low = minf(low, route[i].y)
+		rising = rising or route[i + 1].y > route[i].y + 0.1
+		falling = falling or route[i + 1].y < route[i].y - 0.1
+	check(high - low > 20 and rising and falling, "La boucle alterne montées et descentes avec un relief marqué")
+	var road_contact := true
+	var checked_roads := 0
+	for child in game.island.get_children():
+		if child is MeshInstance3D and String(child.name).begins_with("GroundedRoad"):
+			checked_roads += 1
+			var vertices: PackedVector3Array = child.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+			for i in range(0, vertices.size(), maxi(1, vertices.size() / 80)):
+				var at: Vector3 = vertices[i] + game.ISLAND_OFFSET
+				var query := PhysicsRayQueryParameters3D.create(at + Vector3(0, 1, 0), at - Vector3(0, 2, 0))
+				var hit: Dictionary = game.get_world_3d().direct_space_state.intersect_ray(query)
+				if hit.is_empty() or absf(hit.position.y - at.y) > 0.12:
+					road_contact = false
+	check(road_contact and checked_roads == game.island.roads.size(), "La chaussée suit le sol physique à moins de douze centimètres")
+	game.car.position = game.ISLAND_OFFSET + route[0] + Vector3(0, 1, 0)
+	game.car.velocity = Vector3.ZERO
+	game.car_speed = 0
+	Input.action_press("forward")
+	var target_index := 1
+	var steps := 0
+	var stalled := 0
+	while target_index < route.size() and steps < 12000 and stalled < 240:
+		var difference: Vector3 = game.ISLAND_OFFSET + route[target_index] - game.car.position
+		if Vector2(difference.x, difference.z).length() < 3:
+			target_index += 1
+			stalled = 0
+			continue
+		game.car.rotation.y = lerp_angle(game.car.rotation.y, atan2(-difference.x, -difference.z), 0.15)
+		await frames(1)
+		steps += 1
+		stalled += 1
+	Input.action_release("forward")
+	check(target_index == route.size(), "La voiture peut effectuer un tour complet du circuit sauvage")
+	if target_index < route.size():
+		print("Circuit interrompu : %d/%d à %s" % [target_index, route.size(), game.car.position])
+		for i in game.car.get_slide_collision_count():
+			var collision: KinematicCollision3D = game.car.get_slide_collision(i)
+			print("Obstacle : ", collision.get_collider(), " normale ", collision.get_normal())

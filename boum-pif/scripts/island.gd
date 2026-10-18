@@ -6,6 +6,11 @@ const GRID_STEP := 2.5
 const BUCKET_SIZE := 32.0
 var roads: Array[Dictionary] = []
 var road_buckets: Dictionary = {}
+var race_route := PackedVector3Array()
+var tree_count := 0
+var marking_batches: Dictionary = {}
+var house_positions: Array[Vector3] = []
+var terrain_heights := PackedFloat32Array()
 var main_route := PackedVector3Array()
 var villages: Array[Vector3] = []
 var arrival := Vector3(0, 0, 245)
@@ -16,11 +21,13 @@ func build() -> void:
 	_plan_roads()
 	await _build_terrain()
 	for road in roads:
-		_build_road(road)
+		await _build_road(road)
 		await get_tree().process_frame
-	_build_villages()
+	await _build_villages()
 	await get_tree().process_frame
 	_build_details()
+	await _build_forests()
+	await _build_race_markers()
 	arrival.y = height_at(arrival.x, arrival.z)
 	portal_position.y = height_at(portal_position.x, portal_position.z)
 
@@ -29,14 +36,16 @@ func base_height(x: float, z: float) -> float:
 	var angle := atan2(z, x)
 	var coast := radius / (1.0 + 0.035 * sin(angle * 3) + 0.025 * cos(angle * 5))
 	var beach := 5.0 - maxf(0, coast - 265) * 0.3
-	var hills := (sin(x * 0.035) * cos(z * 0.028) + 1) * 2.5
+	var hills := 14.0 + 8.0 * sin(x * 0.026 + z * 0.012) * cos(z * 0.021)
+	hills += 5.0 * sin(x * 0.048 - z * 0.025) + 2.5 * sin(z * 0.082 + x * 0.034)
+	hills *= smoothstep(35, 100, radius)
 	var cone := maxf(0, 1.0 - radius / 155.0) * 112.0
 	if radius < 26:
 		cone = lerpf(52.0, 93.2, smoothstep(8, 26, radius))
 	return beach + hills * (1.0 - smoothstep(235, 295, coast)) + cone
 
 func _plan_roads() -> void:
-	var entrance := PackedVector3Array([Vector3(0, 0, 270), Vector3(0, 0, 245), Vector3(0, 0, 220)])
+	var entrance := PackedVector3Array([Vector3(0, 0, 270), Vector3(0, 0, 245), Vector3(0, 0, 220), Vector3(0, 0, 195)])
 	_add_road(entrance, 11.0, false)
 	for i in range(281):
 		var t := float(i) / 280
@@ -44,17 +53,21 @@ func _plan_roads() -> void:
 		var radius := lerpf(220, 33, t)
 		main_route.append(Vector3(cos(angle) * radius, 0, sin(angle) * radius))
 	_add_road(main_route, 11.0, false)
-	# Deux villages accessibles depuis la route en spirale, à l'est et à l'ouest.
-	for index in [48, 140]:
-		var start := main_route[index]
+	# Boucle de course irrégulière : trois secteurs sinueux, compressions et crêtes.
+	for i in range(721):
+		var angle := PI / 2 + float(i) / 720 * TAU
+		var radius := 175.0 + 45.0 * sin(3 * angle + PI / 2) + 20.0 * sin(5 * angle)
+		race_route.append(Vector3(cos(angle) * radius, 0, sin(angle) * radius))
+	_add_road(race_route, 12.5, false)
+	for index in [80, 430]:
+		var start := race_route[index]
 		var outward := Vector3(start.x, 0, start.z).normalized()
-		var village := start + outward * 52
+		var village := start + outward * 55
 		villages.append(village)
 		var path := PackedVector3Array()
-		for i in range(21):
-			var t := float(i) / 20
-			path.append(start.lerp(village + outward * 20, t))
-		_add_road(path, 5.0, true)
+		for i in range(41):
+			path.append(start.lerp(village + outward * 45, float(i) / 40))
+		_add_road(path, 6.0, true)
 	# Sentier panoramique sur la côte et chemin autour du cratère.
 	var coast_path := PackedVector3Array()
 	for i in range(101):
@@ -114,6 +127,7 @@ func _build_terrain() -> void:
 			heights[x * (cells + 1) + z] = height_at(-RADIUS + x * GRID_STEP, -RADIUS + z * GRID_STEP)
 		if x % 8 == 0:
 			await get_tree().process_frame
+	terrain_heights = heights
 	var material := StandardMaterial3D.new()
 	material.vertex_color_use_as_albedo = true
 	# Petites tuiles : pas de gros envoi de maillage/collision en une seule image.
@@ -166,13 +180,22 @@ func _build_road(road: Dictionary) -> void:
 		var a := points[i]
 		var b := points[i + 1]
 		var right := Vector3(b.z - a.z, 0, a.x - b.x).normalized() * float(road.width) / 2
-		var corners := [a - right, a + right, b - right, b + right]
-		for index in [0, 1, 2, 1, 3, 2]:
-			var point: Vector3 = corners[index]
-			point.y = height_at(point.x, point.z) + 0.15
-			surface.add_vertex(point)
+		var length_steps := maxi(1, int(ceil(a.distance_to(b) / 1.25)))
+		var width_steps := maxi(1, int(ceil(float(road.width) / 1.25)))
+		for longitudinal in length_steps:
+			for lateral in width_steps:
+				var corners: Array[Vector3] = []
+				for uv in [Vector2(0, 0), Vector2(0, 1), Vector2(1, 0), Vector2(1, 1)]:
+					var point: Vector3 = a.lerp(b, (longitudinal + uv.x) / length_steps) + right * (2 * (lateral + uv.y) / width_steps - 1)
+					point.y = ground_height(point.x, point.z) + 0.04
+					corners.append(point)
+				for index in [0, 1, 2, 1, 3, 2]:
+					surface.add_vertex(corners[index])
+		if i % 24 == 0:
+			await get_tree().process_frame
 	surface.generate_normals()
 	var mesh := MeshInstance3D.new()
+	mesh.name = "GroundedRoad_%d" % roads.find(road)
 	mesh.mesh = surface.commit()
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color("b49b72") if road.dirt else Color("454951")
@@ -183,19 +206,22 @@ func _build_road(road: Dictionary) -> void:
 	if not road.dirt:
 		for i in range(0, points.size() - 1, 4):
 			var point := points[i].lerp(points[i + 1], 0.5)
-			point.y = height_at(point.x, point.z) + 0.22
-			var dash := _box(Vector3(0.18, 0.03, 1.6), point, Color("f1dfaa"), false)
-			dash.rotation.y = atan2(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z)
+			point.y = ground_height(point.x, point.z) + 0.07
+			_add_marking(Vector3(0.18, 0.03, 1.6), point, Color("f1dfaa"), atan2(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z))
 
 func _build_villages() -> void:
 	for v in villages.size():
 		var center := villages[v]
 		var radial := Vector3(center.x, 0, center.z).normalized()
 		var side := Vector3(radial.z, 0, -radial.x)
-		for i in range(6):
-			var point := center + side * (-1 if i % 2 == 0 else 1) * 12 + radial * (int(i / 2) - 1) * 13
+		for i in range(24):
+			var offsets := [-28.0, -14.0, 14.0, 28.0]
+			var point: Vector3 = center + side * offsets[i % 4] + radial * (int(i / 4) - 2) * 13
+			if _near_road(point, 13):
+				continue
+			house_positions.append(point)
 			point.y = height_at(point.x, point.z)
-			var foundation_height := 2.5
+			var foundation_height := 4.0
 			_box(Vector3(9, foundation_height, 8), point + Vector3(0, 0.5, 0), Color("817b70"))
 			_box(Vector3(8, 4.5, 7), point + Vector3(0, 3.6, 0), Color("ecd1a2") if v == 0 else Color("d8aa8e"))
 			var roof := MeshInstance3D.new()
@@ -204,6 +230,7 @@ func _build_villages() -> void:
 			pyramid.bottom_radius = 6.4
 			pyramid.height = 3
 			pyramid.radial_segments = 4
+			roof.visibility_range_end = 220
 			roof.mesh = pyramid
 			roof.position = point + Vector3(0, 7.1, 0)
 			roof.rotation.y = PI / 4
@@ -216,6 +243,8 @@ func _build_villages() -> void:
 			for window_x in [-2.3, 2.3]:
 				_box(Vector3(1.3, 1.4, 0.12), point + Vector3(window_x, 4, -3.57), Color("577c8d"), false)
 			house_count += 1
+			if i % 4 == 0:
+				await get_tree().process_frame
 		_sign(center + side * 20, "HAMEAU DES PALMIERS" if v == 0 else "VILLAGE DES HAUTEURS")
 
 func _build_details() -> void:
@@ -252,37 +281,132 @@ func _build_details() -> void:
 	cloud.material = smoke_material
 	plume.mesh = cloud
 	add_child(plume)
-	for i in range(65):
-		var angle := i * 2.39996
-		var radius := 175.0 + fmod(i * 37.0, 85.0)
-		var point := Vector3(cos(angle) * radius, 0, sin(angle) * radius)
-		if _near_road(point, 13):
-			continue
-		point.y = height_at(point.x, point.z)
-		_box(Vector3(0.7, 6, 0.7), point + Vector3(0, 3, 0), Color("8b704b"))
-		var crown := MeshInstance3D.new()
-		var foliage := CylinderMesh.new()
-		foliage.top_radius = 0
-		foliage.bottom_radius = 4
-		foliage.height = 3
-		foliage.radial_segments = 5
-		crown.mesh = foliage
-		crown.position = point + Vector3(0, 6.8, 0)
-		var leaf := StandardMaterial3D.new()
-		leaf.albedo_color = Color("427a50")
-		crown.material_override = leaf
-		add_child(crown)
-	_sign(Vector3(12, 0, 238), "ÎLE DU VOLCAN\nRoute du cratère ↑\nVillages : chemins de terre")
-	_sign(main_route[160] + Vector3(12, 0, 0), "SOMMET ↑")
-	_sign(main_route[-1] + Vector3(0, 0, 8), "BELVÉDÈRE DU CRATÈRE")
+	_sign(Vector3(13, 0, 237), "CIRCUIT SAUVAGE ↑\nBoucle : forêt et villages\nMontée du cratère : embranchement")
+	_sign(main_route[-1] + Vector3(0, 0, 9), "BELVÉDÈRE DU CRATÈRE")
 
 func _near_road(point: Vector3, margin: float) -> bool:
-	for road in roads:
-		var points: PackedVector3Array = road.points
-		for p in points:
-			if Vector2(point.x - p.x, point.z - p.z).length() < margin:
-				return true
+	var key := Vector2i(int(floor(point.x / BUCKET_SIZE)), int(floor(point.z / BUCKET_SIZE)))
+	for segment: Dictionary in road_buckets.get(key, []):
+		var a: Vector3 = segment.a
+		var b: Vector3 = segment.b
+		var ab := Vector2(b.x - a.x, b.z - a.z)
+		var t := clampf(Vector2(point.x - a.x, point.z - a.z).dot(ab) / maxf(ab.length_squared(), 0.001), 0, 1)
+		var nearest := a.lerp(b, t)
+		if Vector2(point.x - nearest.x, point.z - nearest.z).length() < maxf(margin, float(segment.width) / 2 + 3):
+			return true
 	return false
+
+# Même interpolation triangulaire que le terrain physique, plutôt qu'une hauteur
+# analytique approximative : la chaussée reste au contact des bosses et des creux.
+func ground_height(x: float, z: float) -> float:
+	var cells := int(RADIUS * 2 / GRID_STEP)
+	var gx := clampf((x + RADIUS) / GRID_STEP, 0, cells - 0.001)
+	var gz := clampf((z + RADIUS) / GRID_STEP, 0, cells - 0.001)
+	var ix := int(floor(gx))
+	var iz := int(floor(gz))
+	var fx := gx - ix
+	var fz := gz - iz
+	var a := terrain_heights[ix * (cells + 1) + iz]
+	var b := terrain_heights[(ix + 1) * (cells + 1) + iz]
+	var c := terrain_heights[ix * (cells + 1) + iz + 1]
+	var d := terrain_heights[(ix + 1) * (cells + 1) + iz + 1]
+	return a + (b - a) * fx + (c - a) * fz if fx + fz <= 1 else d + (c - d) * (1 - fx) + (b - d) * (1 - fz)
+
+func _build_forests() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 84021
+	var groups: Dictionary = {}
+	for index in [170, 340, 620]:
+		var center := race_route[index]
+		for x in range(-11, 12):
+			for z in range(-11, 12):
+				var point := center + Vector3(x * 7 + rng.randf_range(-2, 2), 0, z * 7 + rng.randf_range(-2, 2))
+				if Vector2(point.x, point.z).length() > 270 or _near_road(point, 11):
+					continue
+				var near_house := false
+				for house in house_positions:
+					if Vector2(point.x - house.x, point.z - house.z).length() < 13:
+						near_house = true
+						break
+				if near_house:
+					continue
+				point.y = ground_height(point.x, point.z)
+				var key := Vector2i(int(floor(point.x / 48)), int(floor(point.z / 48)))
+				if not groups.has(key):
+					groups[key] = []
+				groups[key].append(point)
+				tree_count += 1
+			await get_tree().process_frame
+	var trunk_mesh := CylinderMesh.new()
+	trunk_mesh.top_radius = 0.3
+	trunk_mesh.bottom_radius = 0.55
+	trunk_mesh.height = 7
+	trunk_mesh.radial_segments = 5
+	var bark := StandardMaterial3D.new()
+	bark.albedo_color = Color("72583e")
+	trunk_mesh.material = bark
+	var crown_mesh := CylinderMesh.new()
+	crown_mesh.top_radius = 0.3
+	crown_mesh.bottom_radius = 3.8
+	crown_mesh.height = 7
+	crown_mesh.radial_segments = 6
+	var leaf := StandardMaterial3D.new()
+	leaf.albedo_color = Color("315e43")
+	crown_mesh.material = leaf
+	var tree_shape := CylinderShape3D.new()
+	tree_shape.radius = 0.55
+	tree_shape.height = 7
+	for key: Vector2i in groups:
+		var points: Array = groups[key]
+		var cluster := Node3D.new()
+		cluster.position = Vector3(key.x * 48, 0, key.y * 48)
+		add_child(cluster)
+		var body := StaticBody3D.new()
+		cluster.add_child(body)
+		for layer in 2:
+			var instances := MultiMesh.new()
+			instances.transform_format = MultiMesh.TRANSFORM_3D
+			instances.mesh = trunk_mesh if layer == 0 else crown_mesh
+			instances.instance_count = points.size()
+			for i in points.size():
+				var at: Vector3 = points[i] - cluster.position + Vector3(0, 3.5 if layer == 0 else 8.5, 0)
+				instances.set_instance_transform(i, Transform3D(Basis.IDENTITY, at))
+			var mesh := MultiMeshInstance3D.new()
+			mesh.multimesh = instances
+			mesh.visibility_range_end = 240
+			mesh.visibility_range_end_margin = 25
+			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			cluster.add_child(mesh)
+		for point: Vector3 in points:
+			var collider := CollisionShape3D.new()
+			collider.shape = tree_shape
+			collider.position = point - cluster.position + Vector3(0, 3.5, 0)
+			body.add_child(collider)
+		await get_tree().process_frame
+
+func _build_race_markers() -> void:
+	for i in range(0, race_route.size() - 1, 12):
+		var point := race_route[i]
+		var forward := (race_route[i + 1] - point).normalized()
+		var side := Vector3(forward.z, 0, -forward.x)
+		for sign_value in [-1, 1]:
+			var marker: Vector3 = point + side * sign_value * 7
+			marker.y = ground_height(marker.x, marker.z)
+			_add_marking(Vector3(0.5, 1, 0.5), marker + Vector3(0, 0.5, 0), Color("e7d8b7") if i % 24 == 0 else Color("b6553d"))
+		if i % 48 == 0:
+			await get_tree().process_frame
+	var start := race_route[0]
+	var forward := (race_route[1] - start).normalized()
+	forward.y = 0
+	forward = forward.normalized()
+	var side := Vector3(forward.z, 0, -forward.x)
+	for row in 2:
+		for i in 12:
+			var point := start + side * (i - 5.5) + forward * (row - 0.5)
+			point.y = ground_height(point.x, point.z) + 0.08
+			_add_marking(Vector3(0.95, 0.04, 0.95), point, Color.WHITE if (i + row) % 2 == 0 else Color("262d35"), atan2(forward.x, forward.z))
+	_sign(start + Vector3(15, 0, -8), "CIRCUIT SAUVAGE\nDépart / Arrivée ←")
+	_flush_markings()
 
 func _sign(point: Vector3, text: String) -> void:
 	point.y = height_at(point.x, point.z)
@@ -300,6 +424,7 @@ func _box(size: Vector3, point: Vector3, color: Color, solid := true) -> MeshIns
 	var box := BoxMesh.new()
 	box.size = size
 	mesh.mesh = box
+	mesh.visibility_range_end = 220
 	mesh.position = point
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
@@ -308,3 +433,29 @@ func _box(size: Vector3, point: Vector3, color: Color, solid := true) -> MeshIns
 	if solid:
 		mesh.create_convex_collision()
 	return mesh
+
+# Les petites balises et bandes sont regroupées pour éviter des centaines de draws.
+func _add_marking(size: Vector3, point: Vector3, color: Color, yaw := 0.0) -> void:
+	var key := str(size) + str(color)
+	if not marking_batches.has(key):
+		marking_batches[key] = {"size": size, "color": color, "transforms": []}
+	marking_batches[key].transforms.append(Transform3D(Basis(Vector3.UP, yaw), point))
+
+func _flush_markings() -> void:
+	for batch: Dictionary in marking_batches.values():
+		var mesh := BoxMesh.new()
+		mesh.size = batch.size
+		var material := StandardMaterial3D.new()
+		material.albedo_color = batch.color
+		mesh.material = material
+		var instances := MultiMesh.new()
+		instances.transform_format = MultiMesh.TRANSFORM_3D
+		instances.mesh = mesh
+		instances.instance_count = batch.transforms.size()
+		for i in batch.transforms.size():
+			instances.set_instance_transform(i, batch.transforms[i])
+		var node := MultiMeshInstance3D.new()
+		node.multimesh = instances
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(node)
+	marking_batches.clear()

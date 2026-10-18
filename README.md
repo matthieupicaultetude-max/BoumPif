@@ -29,12 +29,21 @@ pour permettre le masquage des parties hors champ. Les zones sont conservées en
 mémoire et réutilisées aux visites suivantes, sans reconstruction. La distance
 d’affichage est adaptée au quartier et à l’île.
 
-L’île mesure environ 600 mètres de large et comprend une côte, du relief,
-un volcan central avec cratère, lave et panache de fumée, une route goudronnée
-en spirale jusqu’au sommet, deux villages de six maisons, des chemins de terre
-vers les hameaux, un sentier côtier et un chemin autour du cratère.
-Les bâtiments, le relief et les routes sont solides. Le véhicule utilise une
-surface physique continue et un accrochage au sol pour les pentes.
+L’île mesure environ 600 mètres de large. Sa **boucle de course sauvage**
+alterne virages serrés, courbes rapides, bosses, creux et dénivelés irréguliers.
+La ligne de départ/arrivée est en damier, devant le panneau « CIRCUIT SAUVAGE »,
+un peu après l’arrivée du portail. Les balises rouge et blanc bordent la boucle.
+C’est un parcours libre : pas encore de chronométrage, de classement ni d’adversaires.
+
+Trois massifs regroupent **1 066 arbres** et deux villages totalisent **32 maisons**.
+Les troncs et les bâtiments ont des collisions, avec un dégagement autour des routes.
+La montée en spirale vers le volcan, le cratère, la lave, le panache de fumée,
+les chemins de terre et le sentier côtier sont conservés.
+
+La chaussée est finement subdivisée et suit l’interpolation du terrain physique,
+avec un décalage visuel de 4 cm pour éviter le scintillement. Le véhicule roule
+sur une surface physique continue. Les arbres et les balises sont affichés en
+lots ; les massifs hors champ ou trop éloignés sont masqués.
 
 Tomber dans l’eau ou dans la lave ramène à l’arrivée de la zone. Le passage
 d’un portail emmène aussi la voiture, stationnée près de l’arrivée si l’on est à pied.
@@ -72,5 +81,6 @@ Le test vérifie le sol, la marche, l'entrée et la sortie de voiture, la condui
 le freinage, le saut de drift, le contre-braquage, les deux niveaux de mini-turbo et leurs étincelles,
 l’expiration du boost, les collisions avec les bâtiments et la limite de ville, et la réinitialisation.
 Il teste aussi les portails dans les deux sens, les collisions de la montée, un trajet
-physique complet en voiture jusqu’au cratère et la récupération après une chute dans l’eau.
+physique complet en voiture jusqu’au cratère, un tour complet du circuit sauvage,
+le contact des routes avec le terrain, et la récupération après une chute dans l’eau.
 La qualité visuelle et les sensations de conduite restent à évaluer dans l’éditeur.
