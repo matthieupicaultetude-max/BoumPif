@@ -4,6 +4,8 @@ const IslandZone = preload("res://scripts/island.gd")
 const ISLAND_OFFSET := Vector3(1200, 0, 0)
 const CITY_PORTAL := Vector3(0, 0, -54)
 var island: IslandZone
+var city_zone: Node3D
+var loading_zone := false
 var on_island := false
 var portal_cooldown := 0.0
 var car_spawn := Vector3(4, 0.8, 4)
@@ -54,12 +56,11 @@ func _ready() -> void:
 	sun.light_energy = 1.2
 	sun.shadow_enabled = true
 	add_child(sun)
+	city_zone = Node3D.new()
+	city_zone.name = "CityZone"
+	add_child(city_zone)
 	_build_city()
-	island = IslandZone.new()
-	island.position = ISLAND_OFFSET
-	add_child(island)
-	_build_portal(CITY_PORTAL, "ÎLE DU VOLCAN", Color("66e4ef"))
-	_build_portal(ISLAND_OFFSET + island.portal_position, "RETOUR AU QUARTIER", Color("c4a1ff"))
+	_build_portal(city_zone, CITY_PORTAL, "ÎLE DU VOLCAN", Color("66e4ef"))
 	player = CharacterBody3D.new()
 	player.name = "Player"
 	player.floor_snap_length = 0.5
@@ -73,7 +74,7 @@ func _ready() -> void:
 	player.position = spawn
 	_build_car()
 	camera = Camera3D.new()
-	camera.far = 1000
+	camera.far = 180
 	add_child(camera)
 	camera.current = true
 	var layer := CanvasLayer.new()
@@ -122,30 +123,30 @@ func _box(parent: Node3D, size: Vector3, at: Vector3, color: Color, solid := tru
 		parent.add_child(body)
 
 func _build_city() -> void:
-	_box(self, Vector3(140, 1, 140), Vector3(0, -0.5, 0), Color("739c67"))
-	_box(self, Vector3(16, 0.04, 130), Vector3(0, 0.02, 0), Color("374452"), false)
-	_box(self, Vector3(130, 0.04, 16), Vector3(0, 0.025, 0), Color("374452"), false)
+	_box(city_zone, Vector3(140, 1, 140), Vector3(0, -0.5, 0), Color("739c67"))
+	_box(city_zone, Vector3(16, 0.04, 130), Vector3(0, 0.02, 0), Color("374452"), false)
+	_box(city_zone, Vector3(130, 0.04, 16), Vector3(0, 0.025, 0), Color("374452"), false)
 	for i in range(-12, 13):
 		if absi(i) > 1:
-			_box(self, Vector3(0.15, 0.02, 2), Vector3(0, 0.05, i * 5), Color("f0dd9a"), false)
-			_box(self, Vector3(2, 0.02, 0.15), Vector3(i * 5, 0.05, 0), Color("f0dd9a"), false)
+			_box(city_zone, Vector3(0.15, 0.02, 2), Vector3(0, 0.05, i * 5), Color("f0dd9a"), false)
+			_box(city_zone, Vector3(2, 0.02, 0.15), Vector3(i * 5, 0.05, 0), Color("f0dd9a"), false)
 	var colors := [Color("dcad82"), Color("8ca9bd"), Color("c28070"), Color("c5bd9c")]
 	for x in [-1, 1]:
 		for z in [-1, 1]:
-			_box(self, Vector3(45, 0.18, 45), Vector3(x * 32.5, 0.09, z * 32.5), Color("b5b6b3"))
+			_box(city_zone, Vector3(45, 0.18, 45), Vector3(x * 32.5, 0.09, z * 32.5), Color("b5b6b3"))
 			for row in range(3):
 				for col in range(3):
 					var height := float(5 + ((row * 3 + col * 5) % 4) * 3)
 					var center := Vector3(x * (17 + row * 15), height / 2 + 0.18, z * (17 + col * 15))
-					_box(self, Vector3(10, height, 10), center, colors[(row + col) % 4])
+					_box(city_zone, Vector3(10, height, 10), center, colors[(row + col) % 4])
 					for floor_index in range(int(height / 3)):
 						for window_x in [-2.5, 2.5]:
-							_box(self, Vector3(1.5, 1.4, 0.05), Vector3(center.x + window_x, 2 + floor_index * 3, center.z - 5.03), Color("425d70"), false)
+							_box(city_zone, Vector3(1.5, 1.4, 0.05), Vector3(center.x + window_x, 2 + floor_index * 3, center.z - 5.03), Color("425d70"), false)
 	for axis in [0, 1]:
 		for sign_value in [-1, 1]:
 			var size := Vector3(1, 4, 140) if axis == 0 else Vector3(140, 4, 1)
 			var at := Vector3(sign_value * 70, 2, 0) if axis == 0 else Vector3(0, 2, sign_value * 70)
-			_box(self, size, at, Color("687c7c"))
+			_box(city_zone, size, at, Color("687c7c"))
 
 func _build_car() -> void:
 	car = CharacterBody3D.new()
@@ -269,6 +270,8 @@ func _add_boost_sparks(side: float) -> void:
 	boost_sparks.append(effect)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if loading_zone:
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		yaw -= event.relative.x * 0.003
 		pitch = clampf(pitch - event.relative.y * 0.003, -1.1, 0.7)
@@ -278,6 +281,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _physics_process(delta: float) -> void:
+	if loading_zone:
+		return
 	portal_cooldown = maxf(0, portal_cooldown - delta)
 	if Input.is_action_just_pressed("reset"):
 		_reset()
@@ -307,6 +312,8 @@ func _physics_process(delta: float) -> void:
 			player.velocity.y = 7
 		player.move_and_slide()
 	_check_zone_transition()
+	if loading_zone:
+		return
 	_update_drift_effects(delta)
 	_update_camera()
 	var near_car := player.position.distance_to(car.position) < 4
@@ -448,10 +455,10 @@ func _reset() -> void:
 	yaw = spawn_yaw
 	pitch = -0.2
 
-func _build_portal(point: Vector3, title: String, color: Color) -> void:
+func _build_portal(parent: Node3D, point: Vector3, title: String, color: Color) -> void:
 	for side in [-1, 1]:
-		_box(self, Vector3(0.7, 6, 0.8), point + Vector3(side * 4, 3, 0), Color("535366"))
-	_box(self, Vector3(8.8, 0.6, 0.8), point + Vector3(0, 6, 0), color)
+		_box(parent, Vector3(0.7, 6, 0.8), point + Vector3(side * 4, 3, 0), Color("535366"))
+	_box(parent, Vector3(8.8, 0.6, 0.8), point + Vector3(0, 6, 0), color)
 	var glow := MeshInstance3D.new()
 	var plane := BoxMesh.new()
 	plane.size = Vector3(7.3, 5.4, 0.08)
@@ -462,14 +469,14 @@ func _build_portal(point: Vector3, title: String, color: Color) -> void:
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	glow.material_override = material
-	add_child(glow)
+	parent.add_child(glow)
 	var label := Label3D.new()
 	label.text = title + "\nTraverser à pied ou en voiture"
 	label.position = point + Vector3(0, 7.6, 0)
 	label.font_size = 42
 	label.pixel_size = 0.025
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	add_child(label)
+	parent.add_child(label)
 
 func _check_zone_transition() -> void:
 	var actor: CharacterBody3D = car if driving else player
@@ -485,6 +492,35 @@ func _check_zone_transition() -> void:
 		_respawn_in_zone()
 
 func _travel_to(to_island: bool) -> void:
+	if loading_zone:
+		return
+	if to_island and not is_instance_valid(island):
+		loading_zone = true
+		hud.text = "Préparation de l’île…"
+		# Laisser afficher l'indication avant de commencer les petits lots de travail.
+		await get_tree().process_frame
+		await get_tree().process_frame
+		island = IslandZone.new()
+		island.position = ISLAND_OFFSET
+		island.visible = false
+		add_child(island)
+		await island.build()
+		_build_portal(island, island.portal_position, "RETOUR AU QUARTIER", Color("c4a1ff"))
+		remove_child(island)
+		loading_zone = false
+	# Une zone détachée n'affiche rien, ne simule aucune collision ni particule.
+	if to_island:
+		if city_zone.get_parent() == self:
+			remove_child(city_zone)
+		if island.get_parent() == null:
+			add_child(island)
+		island.visible = true
+	else:
+		if is_instance_valid(island) and island.get_parent() == self:
+			remove_child(island)
+		if city_zone.get_parent() == null:
+			add_child(city_zone)
+	camera.far = 750 if to_island else 180
 	on_island = to_island
 	if on_island:
 		spawn = ISLAND_OFFSET + island.arrival + Vector3(0, 1.1, 0)
@@ -504,3 +540,10 @@ func _respawn_in_zone() -> void:
 		driving = true
 		player.collision_layer = 0
 		player.collision_mask = 0
+
+func _exit_tree() -> void:
+	# Libérer aussi les zones en cache, qui ne sont plus enfants de la scène.
+	if is_instance_valid(island) and island.get_parent() == null:
+		island.free()
+	if is_instance_valid(city_zone) and city_zone.get_parent() == null:
+		city_zone.free()

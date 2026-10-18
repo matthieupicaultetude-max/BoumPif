@@ -12,12 +12,14 @@ var arrival := Vector3(0, 0, 245)
 var portal_position := Vector3(0, 0, 263)
 var house_count := 0
 
-func _ready() -> void:
+func build() -> void:
 	_plan_roads()
-	_build_terrain()
+	await _build_terrain()
 	for road in roads:
 		_build_road(road)
+		await get_tree().process_frame
 	_build_villages()
+	await get_tree().process_frame
 	_build_details()
 	arrival.y = height_at(arrival.x, arrival.z)
 	portal_position.y = height_at(portal_position.x, portal_position.z)
@@ -104,38 +106,46 @@ func height_at(x: float, z: float) -> float:
 	return lerpf(height, weighted_height / total_weight, blend) if total_weight > 0 else height
 
 func _build_terrain() -> void:
-	var surface := SurfaceTool.new()
-	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var cells := int(RADIUS * 2 / GRID_STEP)
 	var heights := PackedFloat32Array()
 	heights.resize((cells + 1) * (cells + 1))
 	for x in range(cells + 1):
 		for z in range(cells + 1):
 			heights[x * (cells + 1) + z] = height_at(-RADIUS + x * GRID_STEP, -RADIUS + z * GRID_STEP)
-	for x in cells:
-		for z in cells:
-			var a := Vector3(-RADIUS + x * GRID_STEP, 0, -RADIUS + z * GRID_STEP)
-			var corners := [a, a + Vector3(GRID_STEP, 0, 0), a + Vector3(0, 0, GRID_STEP), a + Vector3(GRID_STEP, 0, GRID_STEP)]
-			var vertex_heights := [heights[x * (cells + 1) + z], heights[(x + 1) * (cells + 1) + z], heights[x * (cells + 1) + z + 1], heights[(x + 1) * (cells + 1) + z + 1]]
-			for index in [0, 1, 2, 1, 3, 2]:
-				var point: Vector3 = corners[index]
-				point.y = vertex_heights[index]
-				var color := Color("719658")
-				if point.y < 6:
-					color = Color("dbc28b")
-				elif point.y > 48:
-					color = Color("69646a") if point.y < 85 else Color("49444c")
-				surface.set_color(color)
-				surface.add_vertex(point)
-	surface.generate_normals()
-	var terrain := MeshInstance3D.new()
-	terrain.name = "IslandTerrain"
-	terrain.mesh = surface.commit()
+		if x % 8 == 0:
+			await get_tree().process_frame
 	var material := StandardMaterial3D.new()
 	material.vertex_color_use_as_albedo = true
-	terrain.material_override = material
-	add_child(terrain)
-	terrain.create_trimesh_collision()
+	# Petites tuiles : pas de gros envoi de maillage/collision en une seule image.
+	const TILE_CELLS := 31
+	for tx in range(0, cells, TILE_CELLS):
+		for tz in range(0, cells, TILE_CELLS):
+			var surface := SurfaceTool.new()
+			surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+			for x in range(tx, mini(tx + TILE_CELLS, cells)):
+				for z in range(tz, mini(tz + TILE_CELLS, cells)):
+					var a := Vector3(-RADIUS + x * GRID_STEP, 0, -RADIUS + z * GRID_STEP)
+					var corners := [a, a + Vector3(GRID_STEP, 0, 0), a + Vector3(0, 0, GRID_STEP), a + Vector3(GRID_STEP, 0, GRID_STEP)]
+					var vertex_heights := [heights[x * (cells + 1) + z], heights[(x + 1) * (cells + 1) + z], heights[x * (cells + 1) + z + 1], heights[(x + 1) * (cells + 1) + z + 1]]
+					for index in [0, 1, 2, 1, 3, 2]:
+						var point: Vector3 = corners[index]
+						point.y = vertex_heights[index]
+						var color := Color("719658")
+						if point.y < 6:
+							color = Color("dbc28b")
+						elif point.y > 48:
+							color = Color("69646a") if point.y < 85 else Color("49444c")
+						surface.set_color(color)
+						surface.add_vertex(point)
+			surface.index()
+			surface.generate_normals()
+			var terrain := MeshInstance3D.new()
+			terrain.name = "Terrain_%d_%d" % [tx, tz]
+			terrain.mesh = surface.commit()
+			terrain.material_override = material
+			add_child(terrain)
+			terrain.create_trimesh_collision()
+			await get_tree().process_frame
 	# L'océan est visuel : une chute dans l'eau ramène au point d'arrivée.
 	var sea := MeshInstance3D.new()
 	var plane := PlaneMesh.new()

@@ -20,6 +20,7 @@ func frames(count: int) -> void:
 func run() -> void:
 	game = load("res://scenes/main.tscn").instantiate()
 	root.add_child(game)
+	check(not is_instance_valid(game.island), "L’île n’est pas construite au démarrage du quartier")
 	await frames(90)
 	test_arcade_handling()
 	test_kart_drift()
@@ -235,7 +236,13 @@ func test_island_zone() -> void:
 	game.portal_cooldown = 0
 	game.player.position = game.CITY_PORTAL + Vector3(0, 1, 0)
 	await frames(2)
+	check(game.loading_zone, "Le portail lance une préparation progressive")
+	await wait_for_zone()
 	check(game.on_island and not game.driving, "Le portail du quartier mène à l’île à pied")
+	check(not game.city_zone.is_inside_tree() and game.island.is_inside_tree(), "Le quartier est retiré de l’affichage et de la physique sur l’île")
+	var city_query := PhysicsRayQueryParameters3D.create(Vector3(0, 5, 0), Vector3(0, -2, 0))
+	check(game.get_world_3d().direct_space_state.intersect_ray(city_query).is_empty(), "Les collisions du quartier sont absentes pendant la visite de l’île")
+	var cached_island: Node3D = game.island
 	await frames(60)
 	check(game.player.is_on_floor(), "L’arrivée sur l’île possède un sol physique")
 	check(game.island.house_count == 12 and game.island.villages.size() == 2, "Deux hameaux de six maisons")
@@ -255,6 +262,11 @@ func test_island_zone() -> void:
 	game.player.position = game.ISLAND_OFFSET + game.island.portal_position + Vector3(0, 1.1, 0)
 	await frames(2)
 	check(not game.on_island, "Le portail de l’île ramène au quartier")
+	check(not game.island.is_inside_tree() and game.city_zone.is_inside_tree(), "L’île n’est ni rendue ni simulée depuis le quartier")
+	check(game.camera.far == 180, "La distance d’affichage du quartier est limitée")
+	var island_point: Vector3 = game.ISLAND_OFFSET + game.island.arrival
+	var island_query := PhysicsRayQueryParameters3D.create(island_point + Vector3(0, 10, 0), island_point - Vector3(0, 10, 0))
+	check(game.get_world_3d().direct_space_state.intersect_ray(island_query).is_empty(), "Les collisions de l’île sont absentes depuis le quartier")
 	game.driving = true
 	game.player.collision_layer = 0
 	game.player.collision_mask = 0
@@ -262,6 +274,7 @@ func test_island_zone() -> void:
 	game.car.position = game.CITY_PORTAL + Vector3(0, 0.9, 0)
 	await frames(2)
 	check(game.on_island and game.driving, "Le portail transporte aussi la voiture et son conducteur")
+	check(game.island == cached_island and not game.loading_zone, "Revenir sur l’île réutilise la zone sans la reconstruire")
 	# Conduire réellement jusqu'au cratère en suivant la ligne médiane.
 	game.car.position = game.ISLAND_OFFSET + game.island.arrival + Vector3(0, 1, 0)
 	game.car.rotation.y = 0
@@ -293,3 +306,11 @@ func test_island_zone() -> void:
 	game._reset()
 	check(game.on_island and game.player.position.x > 1000, "R réinitialise dans la zone courante")
 	game._travel_to(false)
+
+func wait_for_zone() -> void:
+	var render_frames := 0
+	while game.loading_zone and render_frames < 1000:
+		await process_frame
+		render_frames += 1
+	check(not game.loading_zone and render_frames > 20, "La préparation de l’île rend la main entre les lots de travail")
+	await frames(2)

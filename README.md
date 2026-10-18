@@ -18,8 +18,16 @@ La scène principale est `scenes/main.tscn`. Le quartier et ses collisions sont 
 
 Depuis le quartier, suivre la route vers le nord (tout droit depuis le départ) :
 le portail turquoise « ÎLE DU VOLCAN » se trouve avant le mur, au bout de la rue.
-Traverser le portail à pied ou en voiture. Le portail violet de retour est derrière
-le point d’arrivée sur l’île. Aucun chargement manuel ni touche supplémentaire.
+Traverser le portail à pied ou en voiture. À la première visite, une indication
+« Préparation de l’île… » apparaît pendant sa construction progressive. Le portail violet de retour est derrière
+le point d’arrivée sur l’île. Aucune touche supplémentaire.
+
+Seule la zone visitée est attachée à la scène : le quartier ne rend ni ne simule
+l’île à distance, et inversement. L’île est construite à sa première visite,
+par petits lots répartis sur plusieurs images. Son terrain est découpé en tuiles
+pour permettre le masquage des parties hors champ. Les zones sont conservées en
+mémoire et réutilisées aux visites suivantes, sans reconstruction. La distance
+d’affichage est adaptée au quartier et à l’île.
 
 L’île mesure environ 600 mètres de large et comprend une côte, du relief,
 un volcan central avec cratère, lave et panache de fumée, une route goudronnée
