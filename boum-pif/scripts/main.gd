@@ -1,5 +1,6 @@
 extends Node3D
 
+const RallyCar = preload("res://scripts/rally_car.gd")
 const IslandZone = preload("res://scripts/island.gd")
 const ISLAND_OFFSET := Vector3(1200, 0, 0)
 const CITY_PORTAL := Vector3(0, 0, -54)
@@ -25,7 +26,7 @@ var drift_direction := 0.0
 var drift_charge := 0.0
 var boost_time := 0.0
 var handbrake_was_pressed := false
-var car_visual: Node3D
+var car_visual: RallyCar
 var sparks: Array[CPUParticles3D] = []
 var tire_smoke: Array[CPUParticles3D] = []
 var boost_sparks: Array[CPUParticles3D] = []
@@ -157,18 +158,17 @@ func _build_car() -> void:
 	car.position = Vector3(4, 0.8, 4)
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(1.9, 1.2, 3.8)
+	box.size = Vector3(2.2, 1.2, 4.1)
 	shape.shape = box
 	car.add_child(shape)
-	car_visual = Node3D.new()
+	var cabin_collision := CollisionShape3D.new()
+	var cabin_box := BoxShape3D.new()
+	cabin_box.size = Vector3(1.5, 0.65, 1.6)
+	cabin_collision.shape = cabin_box
+	cabin_collision.position = Vector3(0, 0.65, 0.1)
+	car.add_child(cabin_collision)
+	car_visual = RallyCar.new()
 	car.add_child(car_visual)
-	_box(car_visual, Vector3(1.9, 0.7, 3.8), Vector3.ZERO, Color("e99936"), false)
-	_box(car_visual, Vector3(1.6, 0.65, 1.8), Vector3(0, 0.6, 0.2), Color("344f65"), false)
-	for x in [-0.97, 0.97]:
-		for z in [-1.2, 1.2]:
-			_box(car_visual, Vector3(0.3, 0.65, 0.65), Vector3(x, -0.25, z), Color("242b32"), false)
-	for x in [-0.6, 0.6]:
-		_box(car_visual, Vector3(0.4, 0.2, 0.05), Vector3(x, 0.1, -1.92), Color("fff1b7"), false)
 
 	for side in [-1.0, 1.0]:
 		var effect := CPUParticles3D.new()
@@ -288,6 +288,7 @@ func _physics_process(delta: float) -> void:
 		_reset()
 	if Input.is_action_just_pressed("interact"):
 		_interact()
+	car_visual.sample_ground()
 	if driving:
 		_drive_car(delta)
 	else:
@@ -295,6 +296,7 @@ func _physics_process(delta: float) -> void:
 		car.velocity.z = move_toward(car.velocity.z, 0, 10 * delta)
 	car.velocity.y -= 20 * delta
 	car.move_and_slide()
+	car_visual.update_motion(delta, Input.get_axis("left", "right") if driving else 0.0, drifting)
 	if driving and car.get_slide_collision_count() > 0:
 		for index in car.get_slide_collision_count():
 			if absf(car.get_slide_collision(index).get_normal().y) < 0.5:
@@ -355,7 +357,16 @@ func _drive_car(delta: float) -> void:
 	if boost_time > 0:
 		target_speed = BOOST_SPEED
 		acceleration = 55.0
-	car_speed = move_toward(car_speed, target_speed, acceleration * delta)
+	var grounded := car.is_on_floor()
+	if grounded:
+		var forward := -car.global_basis.z
+		var motion_direction := forward * signf(target_speed)
+		target_speed *= clampf(1.0 + motion_direction.dot(car_visual.ground_normal) * 0.65, 0.65, 1.12)
+		var slope_acceleration := Vector3.DOWN.slide(car_visual.ground_normal).dot(forward) * 9.0
+		car_speed = move_toward(car_speed, target_speed, acceleration * delta)
+		if absf(car_speed) > 0.5 or throttle != 0:
+			car_speed += slope_acceleration * delta
+
 	if handbrake and not drifting:
 		car_speed = move_toward(car_speed, 0, 34.0 * delta)
 		boost_time = 0
@@ -364,10 +375,12 @@ func _drive_car(delta: float) -> void:
 	if drifting:
 		# Le contre-braquage ne change pas le côté du dérapage.
 		turn = drift_direction * (1.1 + 0.7 * steering * drift_direction)
-	car.rotate_y(-turn * delta)
+	car.rotate_y(-turn * delta * (1.0 if grounded else 0.12))
 	var desired_velocity := -car.global_basis.z * car_speed
 	var grip := DRIFT_GRIP if drifting else CAR_GRIP
-	var traction := 1.0 - exp(-grip * delta)
+	# Moins d'appuis réduit le grip ; dans les airs, conserver l'élan balistique.
+	var support := clampf(car_visual.contact_count / 4.0, 0.4, 1.0)
+	var traction := 1.0 - exp(-grip * support * delta) if grounded else 0.0
 	car.velocity.x = lerpf(car.velocity.x, desired_velocity.x, traction)
 	car.velocity.z = lerpf(car.velocity.z, desired_velocity.z, traction)
 
@@ -387,8 +400,6 @@ func _drift_feedback() -> String:
 	return "  |  DRIFT : en charge…" if drifting else ""
 
 func _update_drift_effects(delta: float) -> void:
-	var lean := drift_direction * 0.12 if drifting else 0.0
-	car_visual.rotation.z = lerpf(car_visual.rotation.z, lean, 1.0 - exp(-10 * delta))
 	for effect in sparks:
 		effect.emitting = (drifting and car.is_on_floor() and drift_charge >= MINI_TURBO_CHARGE) or boost_time > 0
 		effect.color = Color("ff9c32") if drift_charge >= SUPER_TURBO_CHARGE or boost_time > 0 else Color("45bfff")
@@ -440,7 +451,7 @@ func _reset() -> void:
 	driving = false
 	_cancel_drift()
 	handbrake_was_pressed = Input.is_action_pressed("jump")
-	car_visual.rotation = Vector3.ZERO
+	car_visual.reset_motion()
 	for effects in [sparks, tire_smoke, boost_sparks]:
 		for effect in effects:
 			effect.emitting = false

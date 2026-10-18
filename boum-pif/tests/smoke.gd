@@ -25,6 +25,7 @@ func run() -> void:
 	test_arcade_handling()
 	test_kart_drift()
 	await test_drift_hop()
+	await test_vehicle_terrain()
 	await frames(90)
 	check(game.player.is_on_floor(), "Le personnage repose sur le sol")
 	var initial: Vector3 = game.player.position
@@ -387,3 +388,72 @@ func road_mask_at(point: Vector3) -> Color:
 	var x := clampi(int((point.x + game.island.RADIUS) / (2 * game.island.RADIUS) * size), 0, size - 1)
 	var z := clampi(int((point.z + game.island.RADIUS) / (2 * game.island.RADIUS) * size), 0, size - 1)
 	return game.island.road_mask.get_pixel(x, z)
+
+func test_vehicle_terrain() -> void:
+	game._reset()
+	await frames(30)
+	var visual: Node3D = game.car_visual
+	check(visual.wheel_pivots.size() == 4 and visual.wheel_spinners[0].get_child(0).mesh is CylinderMesh, "Quatre roues rondes avec jantes et moyeux")
+	var ramp := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(8, 0.4, 16)
+	shape.shape = box
+	ramp.add_child(shape)
+	ramp.position = Vector3(45, 2.2, 0)
+	ramp.rotation.x = deg_to_rad(12)
+	game.add_child(ramp)
+	game.driving = true
+	game.player.collision_layer = 0
+	game.player.collision_mask = 0
+	game.car.position = Vector3(45, 4, 0)
+	await frames(90)
+	check(game.car.is_on_floor() and visual.contact_count == 4, "Les quatre sondes détectent la rampe inclinée")
+	check(visual.rotation.x > 0.12, "La caisse s’incline réellement selon la pente du sol")
+	var front_height: float = visual.wheel_pivots[0].global_position.y
+	var rear_height: float = visual.wheel_pivots[2].global_position.y
+	check(front_height > rear_height + 0.3, "Les essieux suivent des hauteurs de sol différentes")
+	var tires_touch := true
+	for i in 4:
+		if visual.contacts[i].is_empty():
+			tires_touch = false
+		else:
+			var gap: float = (visual.wheel_pivots[i].global_position - visual.contacts[i].position).dot(visual.ground_normal) - visual.WHEEL_RADIUS
+			tires_touch = tires_touch and absf(gap) < 0.08
+	check(tires_touch, "Les quatre pneus restent au contact de la pente sans flotter")
+	game.car_speed = 14
+	game.car.velocity = Vector3(0, 0, -14)
+	for i in 20:
+		game._drive_car(1.0 / 60)
+	var uphill_speed: float = game.car_speed
+	game.car.rotation.y = PI
+	game.car_speed = 14
+	game.car.velocity = Vector3(0, 0, 14)
+	for i in 20:
+		game._drive_car(1.0 / 60)
+	check(game.car_speed > uphill_speed + 0.5, "La pente ralentit la montée et favorise la descente")
+	game.car.rotation.y = 0
+	game.car_speed = 8
+	game.car.position = Vector3(45, 13, 0)
+	game.car.velocity = Vector3(0, 0, -8)
+	await frames(2)
+	var height_before: float = game.car.position.y
+	Input.action_press("forward")
+	Input.action_press("right")
+	await frames(25)
+	check(not game.car.is_on_floor() and game.car.position.y < height_before, "La voiture suit une trajectoire balistique dans les airs")
+	check(absf(Vector2(game.car.velocity.x, game.car.velocity.z).length() - 8) < 0.2, "Accélérer et tourner en l’air ne crée pas d’adhérence")
+	check(visual.spring_offsets[0] < -0.2, "Les roues se détendent quand elles quittent le sol")
+	check(absf(visual.wheel_spinners[0].rotation.x) > 0.1 and absf(visual.wheel_pivots[0].rotation.y) > 0.1 and absf(visual.wheel_pivots[2].rotation.y) < 0.01, "Les pneus roulent et seules les roues avant braquent")
+	Input.action_release("forward")
+	Input.action_release("right")
+	game.car.position = Vector3(45, 5, 0)
+	game.car.velocity = Vector3.ZERO
+	game.car.rotation = Vector3.ZERO
+	game.car_speed = 0
+	await frames(90)
+	check(game.car.is_on_floor() and absf(visual.body_heave) < 0.12 and visual.spring_offsets[0] <= visual.WHEEL_TRAVEL, "Les ressorts amortis se stabilisent après l’atterrissage")
+	game._reset()
+	check(visual.rotation.is_zero_approx() and visual.spring_offsets[0] == 0, "Réinitialiser remet aussi la suspension à zéro")
+	ramp.queue_free()
+	await frames(2)

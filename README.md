@@ -52,6 +52,26 @@ d’un portail emmène aussi la voiture, stationnée près de l’arrivée si l�
 **R** réinitialise dans la zone actuelle. C’est une première version du décor,
 avec des formes simples, sans intérieurs de maisons ni simulation d’eau.
 
+## Voiture de rallye
+
+La voiture dispose d’une carrosserie biseautée, d’un habitacle incliné, d’un toit
+contrasté, de phares, de feux arrière, d’une calandre, de rétroviseurs, de poignées,
+de pare-chocs, d’un aileron et de sorties d’échappement. Les pneus sont cylindriques,
+avec bande de roulement et jantes à branches ; ils tournent avec le déplacement,
+et les roues avant braquent.
+
+Quatre sondes de sol pilotent l’inclinaison de la caisse et les suspensions visuelles
+indépendantes à ressorts amortis. La caisse accompagne les bosses et se stabilise
+après l’atterrissage, avec du roulis en virage et du tangage à l’accélération/freinage.
+La vitesse est influencée par la pente et l’adhérence par les appuis au sol.
+Dans les airs, l’élan et la gravité déterminent la trajectoire : l’accélérateur
+ne crée pas d’adhérence et le braquage est fortement réduit.
+
+Le contrôleur utilise `CharacterBody3D` avec une collision de caisse simplifiée.
+Les quatre roues et ressorts servent à l’animation et à la mesure des appuis ;
+il ne s’agit pas d’une simulation rigide complète avec forces par roue.
+Les jantes et les sculptures des pneus sont regroupées pour limiter les appels de rendu.
+
 ## Dérapage façon kart
 
 Le système s'inspire du dérapage manuel de Mario Kart Wii, avec des réglages propres à BoumPif.
@@ -66,8 +86,8 @@ Le turbo charge au sol à vitesse suffisante ; braquer vers l'intérieur charge 
 - Les étincelles bleues/orange indiquent la charge ; deux gerbes dorées s'allument derrière la voiture pendant le boost.
 - L'inclinaison de la carrosserie et l'indication à l'écran signalent aussi le drift.
 
-La conduite est arcade : accélération vive, braquage serré et mini-turbos, avec une voiture qui reste droite : pas encore de suspension,
-de dégâts, de circulation ou de sauvegarde. Si une sortie est bloquée, le jeu essaie
+La conduite est arcade : accélération vive, braquage serré et mini-turbos.
+Il n’y a pas encore de dégâts, de circulation ou de sauvegarde. Si une sortie est bloquée, le jeu essaie
 l'autre côté du véhicule. La ville est délimitée par des murs.
 
 ## Validation
@@ -79,7 +99,8 @@ godot --headless --path boum-pif --editor --import --quit
 godot --headless --fixed-fps 60 --path boum-pif --script res://tests/smoke.gd
 ```
 
-Le test vérifie le sol, la marche, l'entrée et la sortie de voiture, la conduite,
+Le test vérifie les roues, les quatre appuis sur une rampe, l’inclinaison, le contact
+des pneus avec la pente, les ressorts, le comportement aérien, le sol, la marche, l'entrée et la sortie de voiture, la conduite,
 le freinage, le saut de drift, le contre-braquage, les deux niveaux de mini-turbo et leurs étincelles,
 l’expiration du boost, les collisions avec les bâtiments et la limite de ville, et la réinitialisation.
 Il teste aussi les portails dans les deux sens, les collisions de la montée, un trajet
