@@ -55,12 +55,18 @@ func _terrain() -> void:
 	shader.code = """shader_type spatial;
 varying vec2 ground;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float smooth_noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),f.x),mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),f.x),f.y);
+}
 void vertex() { ground = VERTEX.xz; }
 void fragment() {
     float grain = hash(floor(ground * 9.0));
     float grain_fade = 1.0-smoothstep(0.4,1.2,length(fwidth(ground*9.0)));
     grain = mix(0.5,grain,grain_fade);
-    float patches = hash(floor(ground * 0.4));
+    float patches = smooth_noise(ground * 0.4);
     vec3 base = COLOR.rgb * (0.82 + grain * 0.16 + patches * 0.12);
     float radius = length(ground);
     float arc = smoothstep(-0.4, 0.1, sin(atan(ground.y, ground.x) * 3.0));
