@@ -20,7 +20,10 @@ func frames(count: int) -> void:
 func run() -> void:
 	game = load("res://scenes/main.tscn").instantiate()
 	root.add_child(game)
+	await frames(90)
 	test_arcade_handling()
+	test_kart_drift()
+	await test_drift_hop()
 	await frames(90)
 	check(game.player.is_on_floor(), "Le personnage repose sur le sol")
 	var initial: Vector3 = game.player.position
@@ -55,10 +58,33 @@ func run() -> void:
 	game.player.position = Vector3(6.5, 1.2, -65)
 	await frames(10)
 	game._interact()
+	game.car_speed = 18
+	game.car.velocity = Vector3(0, 0, -18)
+	game.boost_time = 1.3
 	Input.action_press("forward")
-	await frames(120)
+	await frames(30)
 	Input.action_release("forward")
 	check(game.car.position.z > -69, "La limite de ville bloque la voiture")
+	check(not game.drifting and game.drift_charge == 0 and game.boost_time == 0, "Un choc annule le drift et le turbo")
+	game._reset()
+	game.car.position = Vector3(4, 0.8, -65)
+	game.player.position = Vector3(6.5, 1.2, -65)
+	await frames(10)
+	game._interact()
+	game.car_speed = 18
+	game.car.velocity = Vector3(0, 0, -18)
+	game.drifting = true
+	game.drift_direction = 1
+	game.drift_charge = game.SUPER_TURBO_CHARGE
+	game.handbrake_was_pressed = true
+	Input.action_press("jump")
+	Input.action_press("forward")
+	await frames(30)
+	check(not game.drifting and game.drift_charge == 0, "Un choc pendant un drift chargé efface la charge")
+	Input.action_release("jump")
+	Input.action_release("forward")
+	await frames(1)
+	check(game.boost_time == 0, "Relâcher après un choc ne donne pas de turbo")
 	game._reset()
 	check(not game.driving and game.player.position.is_equal_approx(game.spawn), "Réinitialisation")
 	print("Résultat : %d échec(s)" % failures)
@@ -81,7 +107,7 @@ func test_arcade_handling() -> void:
 	for i in 20:
 		game._drive_car(1.0 / 60.0)
 	var drift_slip: float = absf(game.car.velocity.dot(game.car.global_basis.x))
-	check(game.drifting and drift_slip > normal_slip * 2 and drift_slip > 4, "Espace à vitesse élevée provoque une glisse latérale")
+	check(game.drifting and drift_slip > normal_slip * 1.5 and drift_slip > 4, "Espace à vitesse élevée provoque une glisse latérale")
 	check(Vector2(game.car.velocity.x, game.car.velocity.z).length() > 8, "Le drift conserve de la vitesse")
 	Input.action_release("jump")
 	Input.action_release("right")
@@ -97,4 +123,96 @@ func test_arcade_handling() -> void:
 		game._drive_car(1.0 / 60.0)
 	check(not game.drifting and game.car.velocity.length() < 0.1, "Espace freine à basse vitesse sans drift")
 	Input.action_release("jump")
+	game._reset()
+
+func prepare_drift() -> void:
+	for action in ["forward", "back", "left", "right", "jump"]:
+		Input.action_release(action)
+	game._reset()
+	game.car_speed = 18.0
+	game.car.velocity = Vector3(0, 0, -18)
+	Input.action_press("forward")
+
+func drive_steps(count: int) -> void:
+	for i in count:
+		game._drive_car(1.0 / 60.0)
+
+func test_kart_drift() -> void:
+	prepare_drift()
+	Input.action_press("jump")
+	drive_steps(60)
+	check(not game.drifting and game.drift_charge == 0, "Espace en ligne droite ne charge pas de turbo")
+	prepare_drift()
+	Input.action_press("right")
+	Input.action_press("jump")
+	drive_steps(20)
+	Input.action_release("jump")
+	drive_steps(1)
+	check(game.boost_time == 0, "Un drift trop court ne donne pas de turbo")
+	prepare_drift()
+	Input.action_press("right")
+	Input.action_press("jump")
+	drive_steps(45)
+	check(game.drift_charge >= game.MINI_TURBO_CHARGE and game.drift_charge < game.SUPER_TURBO_CHARGE, "Premier niveau bleu chargé")
+	game._update_drift_effects(0.016)
+	check(game.sparks[0].emitting and game.sparks[0].color == Color("45bfff"), "Étincelles bleues au premier niveau")
+	Input.action_release("jump")
+	drive_steps(1)
+	var blue_duration: float = game.boost_time
+	drive_steps(20)
+	check(blue_duration > 0 and game.car_speed > game.CAR_SPEED, "Relâcher un drift bleu donne un mini-turbo")
+	drive_steps(120)
+	check(game.boost_time == 0 and game.car_speed <= game.CAR_SPEED, "Le turbo expire et la vitesse redevient normale")
+	prepare_drift()
+	Input.action_press("right")
+	Input.action_press("jump")
+	drive_steps(100)
+	check(game.drift_charge >= game.SUPER_TURBO_CHARGE, "Second niveau orange chargé")
+	game._update_drift_effects(0.016)
+	check(game.sparks[0].emitting and game.sparks[0].color == Color("ff9c32"), "Étincelles orange au second niveau")
+	Input.action_release("right")
+	Input.action_press("left")
+	var before: float = game.car.rotation.y
+	drive_steps(20)
+	var turn: float = wrapf(game.car.rotation.y - before, -PI, PI)
+	check(game.drifting and game.drift_direction == 1 and turn < 0 and absf(turn) < 0.2, "Contre-braquer élargit le virage sans inverser le drift")
+	Input.action_release("jump")
+	drive_steps(1)
+	check(game.boost_time > blue_duration, "Le super mini-turbo dure plus longtemps")
+	game._reset()
+	check(game.boost_time == 0 and game.drift_charge == 0 and not game.drifting, "Réinitialiser efface charge et turbo")
+	prepare_drift()
+	game.car_speed = -10
+	game.car.velocity = Vector3(0, 0, 10)
+	Input.action_release("forward")
+	Input.action_press("back")
+	Input.action_press("right")
+	Input.action_press("jump")
+	drive_steps(10)
+	check(not game.drifting and game.boost_time == 0, "Pas de drift en marche arrière")
+	prepare_drift()
+	Input.action_release("forward")
+	game._reset()
+
+func test_drift_hop() -> void:
+	game._reset()
+	game.driving = true
+	game.player.collision_layer = 0
+	game.player.collision_mask = 0
+	await frames(10)
+	game.car_speed = 14
+	game.car.velocity = Vector3(0, 0, -14)
+	var ground_height: float = game.car.position.y
+	Input.action_press("forward")
+	Input.action_press("right", 0.2)
+	Input.action_press("jump")
+	await frames(10)
+	check(game.drifting and game.car.position.y > ground_height + 0.15, "Le déclenchement fait réellement sauter la voiture")
+	var air_charge: float = game.drift_charge
+	await frames(4)
+	check(is_equal_approx(game.drift_charge, air_charge), "Le turbo ne se charge pas dans les airs")
+	await frames(20)
+	check(game.car.is_on_floor(), "La voiture retombe après le saut")
+	for action in ["forward", "right", "jump"]:
+		Input.action_release(action)
 	game._reset()

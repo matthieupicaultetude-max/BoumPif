@@ -6,7 +6,16 @@ const CAR_ACCELERATION := 22.0
 const CAR_GRIP := 12.0
 const DRIFT_GRIP := 1.5
 const DRIFT_MIN_SPEED := 8.0
+const MINI_TURBO_CHARGE := 0.8
+const SUPER_TURBO_CHARGE := 1.8
+const BOOST_SPEED := 33.0
 var drifting := false
+var drift_direction := 0.0
+var drift_charge := 0.0
+var boost_time := 0.0
+var handbrake_was_pressed := false
+var car_visual: Node3D
+var sparks: Array[CPUParticles3D] = []
 var player: CharacterBody3D
 var car: CharacterBody3D
 var camera: Camera3D
@@ -131,13 +140,37 @@ func _build_car() -> void:
 	box.size = Vector3(1.9, 1.2, 3.8)
 	shape.shape = box
 	car.add_child(shape)
-	_box(car, Vector3(1.9, 0.7, 3.8), Vector3.ZERO, Color("e99936"), false)
-	_box(car, Vector3(1.6, 0.65, 1.8), Vector3(0, 0.6, 0.2), Color("344f65"), false)
+	car_visual = Node3D.new()
+	car.add_child(car_visual)
+	_box(car_visual, Vector3(1.9, 0.7, 3.8), Vector3.ZERO, Color("e99936"), false)
+	_box(car_visual, Vector3(1.6, 0.65, 1.8), Vector3(0, 0.6, 0.2), Color("344f65"), false)
 	for x in [-0.97, 0.97]:
 		for z in [-1.2, 1.2]:
-			_box(car, Vector3(0.3, 0.65, 0.65), Vector3(x, -0.25, z), Color("242b32"), false)
+			_box(car_visual, Vector3(0.3, 0.65, 0.65), Vector3(x, -0.25, z), Color("242b32"), false)
 	for x in [-0.6, 0.6]:
-		_box(car, Vector3(0.4, 0.2, 0.05), Vector3(x, 0.1, -1.92), Color("fff1b7"), false)
+		_box(car_visual, Vector3(0.4, 0.2, 0.05), Vector3(x, 0.1, -1.92), Color("fff1b7"), false)
+
+	for side in [-1.0, 1.0]:
+		var effect := CPUParticles3D.new()
+		effect.position = Vector3(side, -0.3, 1.3)
+		effect.amount = 24
+		effect.lifetime = 0.25
+		effect.direction = Vector3(side, 0.3, 1)
+		effect.spread = 35
+		effect.initial_velocity_min = 2
+		effect.initial_velocity_max = 5
+		effect.gravity = Vector3(0, -5, 0)
+		var spark_mesh := SphereMesh.new()
+		spark_mesh.radius = 0.06
+		spark_mesh.height = 0.12
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.vertex_color_use_as_albedo = true
+		spark_mesh.material = material
+		effect.mesh = spark_mesh
+		effect.emitting = false
+		car_visual.add_child(effect)
+		sparks.append(effect)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -166,7 +199,7 @@ func _physics_process(delta: float) -> void:
 				car_speed = 0
 				car.velocity.x = 0
 				car.velocity.z = 0
-				drifting = false
+				_cancel_drift()
 	if not driving:
 		var input := Input.get_vector("left", "right", "forward", "back")
 		var direction := Basis(Vector3.UP, yaw) * Vector3(input.x, 0, input.y)
@@ -176,36 +209,84 @@ func _physics_process(delta: float) -> void:
 		if player.is_on_floor() and Input.is_action_just_pressed("jump"):
 			player.velocity.y = 7
 		player.move_and_slide()
+	_update_drift_effects(delta)
 	_update_camera()
 	var near_car := player.position.distance_to(car.position) < 4
-	hud.text = "BOUMPIF — Premier quartier\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["maintenir pour drifter / freiner" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), "  |  DRIFT" if drifting else ""] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
+	hud.text = "BOUMPIF — Premier quartier\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["direction + maintien : drift ; relâcher : mini-turbo" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), _drift_feedback()] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
 
-# Conserver l'inertie dans le monde : le châssis tourne avant la trajectoire
-# pendant un drift. Le grip normal réaligne rapidement la voiture au relâchement.
+# Drift manuel : saut au déclenchement, côté verrouillé, contre-braquage
+# pour élargir la courbe, puis mini-turbo au relâchement d'Espace.
 func _drive_car(delta: float) -> void:
 	var throttle := Input.get_axis("back", "forward")
 	var steering := Input.get_axis("left", "right")
 	var handbrake := Input.is_action_pressed("jump")
+	var pressed := handbrake and not handbrake_was_pressed
+	var released := not handbrake and handbrake_was_pressed
+	handbrake_was_pressed = handbrake
 	var ground_speed := Vector2(car.velocity.x, car.velocity.z).length()
-	if not handbrake or ground_speed < 3.0:
+	boost_time = maxf(0, boost_time - delta)
+	if drifting and (ground_speed < 3.0 or car_speed <= 0):
+		_cancel_drift()
+	if drifting and released:
+		if drift_charge >= SUPER_TURBO_CHARGE:
+			boost_time = 1.3
+		elif drift_charge >= MINI_TURBO_CHARGE:
+			boost_time = 0.65
 		drifting = false
-	elif ground_speed >= DRIFT_MIN_SPEED and car_speed > 0:
+		drift_charge = 0
+		drift_direction = 0
+	if pressed and car.is_on_floor() and ground_speed >= DRIFT_MIN_SPEED and car_speed > 0 and absf(steering) > 0.1:
 		drifting = true
-	var acceleration := 9.0 if drifting else CAR_ACCELERATION
+		drift_direction = signf(steering)
+		drift_charge = 0
+		boost_time = 0
+		car.velocity.y = 3.8
+	if drifting and car.is_on_floor() and ground_speed >= DRIFT_MIN_SPEED:
+		# Braquer vers l'intérieur charge plus vite que contre-braquer.
+		var charge_rate := 1.2 if steering * drift_direction > 0.1 else 0.5
+		drift_charge = minf(SUPER_TURBO_CHARGE, drift_charge + charge_rate * delta)
 	var target_speed := throttle * (CAR_SPEED if throttle >= 0 else 10.0)
-	car_speed = move_toward(car_speed, target_speed, (acceleration if throttle else 8.0) * delta)
-	if handbrake:
-		car_speed = move_toward(car_speed, 0, (6.0 if drifting else 34.0) * delta)
-	# Braquage vif dès les basses vitesses, plafonné pour éviter les toupies.
-	var steering_rate := lerpf(0.0, 2.3, clampf(absf(car_speed) / 7.0, 0.0, 1.0))
+	var acceleration := CAR_ACCELERATION if throttle else 8.0
+	if boost_time > 0:
+		target_speed = BOOST_SPEED
+		acceleration = 55.0
+	car_speed = move_toward(car_speed, target_speed, acceleration * delta)
+	if handbrake and not drifting:
+		car_speed = move_toward(car_speed, 0, 34.0 * delta)
+		boost_time = 0
+	var steering_rate := 2.3 * clampf(absf(car_speed) / 7.0, 0.0, 1.0)
+	var turn := steering * signf(car_speed) * steering_rate
 	if drifting:
-		steering_rate *= 1.3
-	car.rotate_y(-steering * signf(car_speed) * steering_rate * delta)
+		# Le contre-braquage ne change pas le côté du dérapage.
+		turn = drift_direction * (1.1 + 0.7 * steering * drift_direction)
+	car.rotate_y(-turn * delta)
 	var desired_velocity := -car.global_basis.z * car_speed
 	var grip := DRIFT_GRIP if drifting else CAR_GRIP
 	var traction := 1.0 - exp(-grip * delta)
 	car.velocity.x = lerpf(car.velocity.x, desired_velocity.x, traction)
 	car.velocity.z = lerpf(car.velocity.z, desired_velocity.z, traction)
+
+func _cancel_drift() -> void:
+	drifting = false
+	drift_direction = 0
+	drift_charge = 0
+	boost_time = 0
+
+func _drift_feedback() -> String:
+	if boost_time > 0:
+		return "  |  MINI-TURBO !"
+	if drift_charge >= SUPER_TURBO_CHARGE:
+		return "  |  ORANGE : super mini-turbo prêt !"
+	if drift_charge >= MINI_TURBO_CHARGE:
+		return "  |  BLEU : mini-turbo prêt !"
+	return "  |  DRIFT : en charge…" if drifting else ""
+
+func _update_drift_effects(delta: float) -> void:
+	var lean := drift_direction * 0.12 if drifting else 0.0
+	car_visual.rotation.z = lerpf(car_visual.rotation.z, lean, 1.0 - exp(-10 * delta))
+	for effect in sparks:
+		effect.emitting = (drifting and car.is_on_floor() and drift_charge >= MINI_TURBO_CHARGE) or boost_time > 0
+		effect.color = Color("ff9c32") if drift_charge >= SUPER_TURBO_CHARGE or boost_time > 0 else Color("45bfff")
 
 func _update_camera() -> void:
 	camera.rotation = Vector3(pitch, yaw, 0)
@@ -236,6 +317,7 @@ func _interact() -> void:
 				player.collision_layer = 1
 				player.collision_mask = 1
 				driving = false
+				_cancel_drift()
 				return
 	elif player.position.distance_to(car.position) < 4:
 		driving = true
@@ -245,7 +327,11 @@ func _interact() -> void:
 
 func _reset() -> void:
 	driving = false
-	drifting = false
+	_cancel_drift()
+	handbrake_was_pressed = Input.is_action_pressed("jump")
+	car_visual.rotation = Vector3.ZERO
+	for effect in sparks:
+		effect.emitting = false
 	car_speed = 0
 	player.collision_layer = 1
 	player.collision_mask = 1
