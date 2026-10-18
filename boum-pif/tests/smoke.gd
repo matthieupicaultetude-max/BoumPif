@@ -87,6 +87,7 @@ func run() -> void:
 	check(game.boost_time == 0, "Relâcher après un choc ne donne pas de turbo")
 	game._reset()
 	check(not game.driving and game.player.position.is_equal_approx(game.spawn), "Réinitialisation")
+	await test_island_zone()
 	print("Résultat : %d échec(s)" % failures)
 	quit(1 if failures else 0)
 
@@ -228,3 +229,67 @@ func test_drift_hop() -> void:
 	for action in ["forward", "right", "jump"]:
 		Input.action_release(action)
 	game._reset()
+
+func test_island_zone() -> void:
+	game._travel_to(false)
+	game.portal_cooldown = 0
+	game.player.position = game.CITY_PORTAL + Vector3(0, 1, 0)
+	await frames(2)
+	check(game.on_island and not game.driving, "Le portail du quartier mène à l’île à pied")
+	await frames(60)
+	check(game.player.is_on_floor(), "L’arrivée sur l’île possède un sol physique")
+	check(game.island.house_count == 12 and game.island.villages.size() == 2, "Deux hameaux de six maisons")
+	check(game.island.roads.size() >= 6, "Route principale et chemins secondaires présents")
+	var route: PackedVector3Array = game.island.main_route
+	check(route[-1].y > route[0].y + 70, "La route atteint le haut du volcan")
+	var route_collision_ok := true
+	for i in range(0, route.size(), 8):
+		var point: Vector3 = game.ISLAND_OFFSET + route[i]
+		var query := PhysicsRayQueryParameters3D.create(point + Vector3(0, 8, 0), point - Vector3(0, 8, 0))
+		var hit: Dictionary = game.get_world_3d().direct_space_state.intersect_ray(query)
+		if hit.is_empty() or absf(hit.position.y - point.y) > 1.0 or hit.normal.y < 0.7:
+			route_collision_ok = false
+			print("Collision route %d : hauteur %.2f, contact %s" % [i, point.y, hit])
+	check(route_collision_ok, "Collisions continues sur toute la montée")
+	game.portal_cooldown = 0
+	game.player.position = game.ISLAND_OFFSET + game.island.portal_position + Vector3(0, 1.1, 0)
+	await frames(2)
+	check(not game.on_island, "Le portail de l’île ramène au quartier")
+	game.driving = true
+	game.player.collision_layer = 0
+	game.player.collision_mask = 0
+	game.portal_cooldown = 0
+	game.car.position = game.CITY_PORTAL + Vector3(0, 0.9, 0)
+	await frames(2)
+	check(game.on_island and game.driving, "Le portail transporte aussi la voiture et son conducteur")
+	# Conduire réellement jusqu'au cratère en suivant la ligne médiane.
+	game.car.position = game.ISLAND_OFFSET + game.island.arrival + Vector3(0, 1, 0)
+	game.car.rotation.y = 0
+	Input.action_press("forward")
+	var target_index := 0
+	var steps := 0
+	var stalled := 0
+	while target_index < route.size() and steps < 9000 and stalled < 240:
+		var target: Vector3 = game.ISLAND_OFFSET + route[target_index]
+		var difference: Vector3 = target - game.car.position
+		if Vector2(difference.x, difference.z).length() < 4:
+			target_index += 1
+			stalled = 0
+			continue
+		game.car.rotation.y = lerp_angle(game.car.rotation.y, atan2(-difference.x, -difference.z), 0.15)
+		await frames(1)
+		steps += 1
+		stalled += 1
+	Input.action_release("forward")
+	check(target_index == route.size() and game.car.position.y > 75, "La voiture peut monter toute la route jusqu’au cratère")
+	if target_index < route.size():
+		print("Montée interrompue : point %d/%d ; position %s ; cible %s ; vitesse %s" % [target_index, route.size(), game.car.position, route[target_index], game.car.velocity])
+		for i in game.car.get_slide_collision_count():
+			var hit: KinematicCollision3D = game.car.get_slide_collision(i)
+			print("Obstacle : ", hit.get_collider(), " normale ", hit.get_normal(), " contact ", hit.get_position())
+	game.car.position.y = -4
+	await frames(2)
+	check(game.on_island and game.driving and game.car.position.y > 1, "L’eau ramène à l’arrivée sans perdre la voiture")
+	game._reset()
+	check(game.on_island and game.player.position.x > 1000, "R réinitialise dans la zone courante")
+	game._travel_to(false)

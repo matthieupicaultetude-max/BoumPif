@@ -1,5 +1,14 @@
 extends Node3D
 
+const IslandZone = preload("res://scripts/island.gd")
+const ISLAND_OFFSET := Vector3(1200, 0, 0)
+const CITY_PORTAL := Vector3(0, 0, -54)
+var island: IslandZone
+var on_island := false
+var portal_cooldown := 0.0
+var car_spawn := Vector3(4, 0.8, 4)
+var spawn_yaw := 0.0
+
 const WALK_SPEED := 6.0
 const CAR_SPEED := 24.0
 const CAR_ACCELERATION := 22.0
@@ -46,8 +55,14 @@ func _ready() -> void:
 	sun.shadow_enabled = true
 	add_child(sun)
 	_build_city()
+	island = IslandZone.new()
+	island.position = ISLAND_OFFSET
+	add_child(island)
+	_build_portal(CITY_PORTAL, "ÎLE DU VOLCAN", Color("66e4ef"))
+	_build_portal(ISLAND_OFFSET + island.portal_position, "RETOUR AU QUARTIER", Color("c4a1ff"))
 	player = CharacterBody3D.new()
 	player.name = "Player"
+	player.floor_snap_length = 0.5
 	add_child(player)
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = 0.35
@@ -58,7 +73,7 @@ func _ready() -> void:
 	player.position = spawn
 	_build_car()
 	camera = Camera3D.new()
-	camera.far = 250
+	camera.far = 1000
 	add_child(camera)
 	camera.current = true
 	var layer := CanvasLayer.new()
@@ -135,6 +150,8 @@ func _build_city() -> void:
 func _build_car() -> void:
 	car = CharacterBody3D.new()
 	car.name = "Car"
+	car.floor_snap_length = 1.0
+	car.floor_max_angle = deg_to_rad(50)
 	add_child(car)
 	car.position = Vector3(4, 0.8, 4)
 	var shape := CollisionShape3D.new()
@@ -261,6 +278,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _physics_process(delta: float) -> void:
+	portal_cooldown = maxf(0, portal_cooldown - delta)
 	if Input.is_action_just_pressed("reset"):
 		_reset()
 	if Input.is_action_just_pressed("interact"):
@@ -288,10 +306,11 @@ func _physics_process(delta: float) -> void:
 		if player.is_on_floor() and Input.is_action_just_pressed("jump"):
 			player.velocity.y = 7
 		player.move_and_slide()
+	_check_zone_transition()
 	_update_drift_effects(delta)
 	_update_camera()
 	var near_car := player.position.distance_to(car.position) < 4
-	hud.text = "BOUMPIF — Premier quartier\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["direction + maintien : drift ; relâcher : mini-turbo" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), _drift_feedback()] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
+	hud.text = "BOUMPIF — %s\nZQSD / WASD / flèches : se déplacer · Souris : regarder\nEspace : %s · R : réinitialiser · Échap : libérer la souris\n%s" % ["Île du volcan" if on_island else "Quartier · portail de l’île au bout de la route nord", "direction + maintien : drift ; relâcher : mini-turbo" if driving else "sauter", "E : sortir à l’arrêt  |  %d km/h%s" % [int(Vector2(car.velocity.x, car.velocity.z).length() * 3.6), _drift_feedback()] if driving else ("E : entrer dans la voiture" if near_car else "Approche-toi de la voiture orange pour monter.")]
 
 # Drift manuel : saut au déclenchement, côté verrouillé, contre-braquage
 # pour élargir la courbe, puis mini-turbo au relâchement d'Espace.
@@ -423,8 +442,65 @@ func _reset() -> void:
 	player.collision_mask = 1
 	player.position = spawn
 	player.velocity = Vector3.ZERO
-	car.position = Vector3(4, 0.8, 4)
-	car.rotation = Vector3.ZERO
+	car.position = car_spawn
+	car.rotation = Vector3(0, spawn_yaw, 0)
 	car.velocity = Vector3.ZERO
-	yaw = 0
+	yaw = spawn_yaw
 	pitch = -0.2
+
+func _build_portal(point: Vector3, title: String, color: Color) -> void:
+	for side in [-1, 1]:
+		_box(self, Vector3(0.7, 6, 0.8), point + Vector3(side * 4, 3, 0), Color("535366"))
+	_box(self, Vector3(8.8, 0.6, 0.8), point + Vector3(0, 6, 0), color)
+	var glow := MeshInstance3D.new()
+	var plane := BoxMesh.new()
+	plane.size = Vector3(7.3, 5.4, 0.08)
+	glow.mesh = plane
+	glow.position = point + Vector3(0, 2.8, 0)
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(color, 0.3)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glow.material_override = material
+	add_child(glow)
+	var label := Label3D.new()
+	label.text = title + "\nTraverser à pied ou en voiture"
+	label.position = point + Vector3(0, 7.6, 0)
+	label.font_size = 42
+	label.pixel_size = 0.025
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	add_child(label)
+
+func _check_zone_transition() -> void:
+	var actor: CharacterBody3D = car if driving else player
+	var portal: Vector3 = ISLAND_OFFSET + island.portal_position if on_island else CITY_PORTAL
+	if portal_cooldown <= 0 and absf(actor.position.y - portal.y) < 5 and Vector2(actor.position.x - portal.x, actor.position.z - portal.z).length() < 3.3:
+		_travel_to(not on_island)
+		return
+	if on_island:
+		var local := actor.position - ISLAND_OFFSET
+		if local.y < 1.0 or (Vector2(local.x, local.z).length() < 17 and local.y < 62):
+			_respawn_in_zone()
+	elif actor.position.y < -10:
+		_respawn_in_zone()
+
+func _travel_to(to_island: bool) -> void:
+	on_island = to_island
+	if on_island:
+		spawn = ISLAND_OFFSET + island.arrival + Vector3(0, 1.1, 0)
+		car_spawn = ISLAND_OFFSET + island.arrival + Vector3(4, 0.9, 0)
+		spawn_yaw = 0
+	else:
+		spawn = Vector3(0, 1.2, -43)
+		car_spawn = Vector3(4, 0.8, -43)
+		spawn_yaw = PI
+	_respawn_in_zone()
+
+func _respawn_in_zone() -> void:
+	var was_driving := driving
+	_reset()
+	portal_cooldown = 2.0
+	if was_driving:
+		driving = true
+		player.collision_layer = 0
+		player.collision_mask = 0
